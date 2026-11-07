@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ef4444"/>
+      <stop offset="100%" stop-color="#ea580c"/>
+    </linearGradient>
+  </defs>
+  <rect width="192" height="192" rx="36" fill="#081425"/>
+  <rect x="8" y="8" width="176" height="176" rx="28" fill="#152031" stroke="#ef4444" stroke-width="4"/>
+  <circle cx="96" cy="96" r="62" fill="url(#grad)"/>
+  <!-- Wrench and Alert icon -->
+  <path d="M124 68a22 22 0 0 0-25.5 3.5l-33 33a8 8 0 0 0 0 11.3l10.7 10.7a8 8 0 0 0 11.3 0l33-33A22 22 0 0 0 124 68zm-5 13a6 6 0 1 1 0 12 6 6 0 0 1 0-12z" fill="#081425"/>
+  <circle cx="68" cy="124" r="14" fill="#ffb95f"/>
+  <path d="M68 116v10m0 4v2" stroke="#081425" stroke-width="3" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,6 @@
+{
+  "name": "Cabine Operacional",
+  "description": "Painel de alta performance e controle operacional para motoristas autônomos e gestores de frete de longa distância.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

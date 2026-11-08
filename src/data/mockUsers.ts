@@ -1,5 +1,11 @@
-import { User } from '../types/cockpit';
+import { User, isAdminRole } from '../types/cockpit';
 
+/**
+ * Contas pré-configuradas padrão (TODAS OPERACIONAIS / MOTORISTAS).
+ * Conforme política de segurança:
+ * NENHUMA conta pré-configurada possui permissão de Administrador.
+ * Somente contas cadastradas e verificadas no SUPABASE são aceitas como Administrador.
+ */
 export const INITIAL_USERS: User[] = [
   {
     id: 'user-1',
@@ -13,20 +19,22 @@ export const INITIAL_USERS: User[] = [
     truckPlate: 'BRA-9S40',
     cnhCategory: 'E',
     isEmailVerified: true,
+    isSupabaseVerifiedAdmin: false,
     createdAt: '2025-01-15T10:00:00Z',
   },
   {
     id: 'user-2',
-    name: 'Ricardo Pinheiro (Administrador do Sistema)',
+    name: 'Ricardo Pinheiro (Motorista Rodoviário)',
     email: 'ricardo@cabine.com',
     password: 'frota2026',
-    role: 'administrador',
+    role: 'motorista', // Removido status de administrador pré-configurado
     rntrc: '39.104.992',
     phone: '(45) 99711-8840',
     truckModel: 'Volvo FH 540 6x2 Globetrotter',
     truckPlate: 'PR-CAS-6540',
     cnhCategory: 'E',
     isEmailVerified: true,
+    isSupabaseVerifiedAdmin: false,
     createdAt: '2025-02-10T14:30:00Z',
   },
   {
@@ -41,7 +49,23 @@ export const INITIAL_USERS: User[] = [
     truckPlate: 'MG-BTM-2651',
     cnhCategory: 'E',
     isEmailVerified: true,
+    isSupabaseVerifiedAdmin: false,
     createdAt: '2025-03-01T08:00:00Z',
+  },
+  {
+    id: 'user-4',
+    name: 'Carlos Eduardo (Distribuição Urbana VUC)',
+    email: 'carlos@cabine.com',
+    password: 'carlos123',
+    role: 'motorista_autonomo',
+    rntrc: '61.802.119',
+    phone: '(19) 98123-4567',
+    truckModel: 'Hyundai HR 2.5 Turbo',
+    truckPlate: 'SP-HHR-2026',
+    cnhCategory: 'B',
+    isEmailVerified: true,
+    isSupabaseVerifiedAdmin: false,
+    createdAt: '2025-04-10T09:00:00Z',
   },
 ];
 
@@ -50,7 +74,15 @@ export const getUsersFromStorage = (): User[] => {
     const raw = localStorage.getItem('cabine_users_list');
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        // Enforce: revoga privilégio de admin de contas não verificadas no Supabase
+        return parsed.map((u) => {
+          if (isAdminRole(u.role) && !u.isSupabaseVerifiedAdmin) {
+            return { ...u, role: 'motorista', isSupabaseVerifiedAdmin: false };
+          }
+          return u;
+        });
+      }
     }
   } catch {
     // fallback
@@ -69,7 +101,16 @@ export const saveUsersToStorage = (users: User[]): void => {
 export const getCurrentUserSession = (): User | null => {
   try {
     const raw = localStorage.getItem('cabine_logged_user');
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const user = JSON.parse(raw);
+      // Revoga privilégio de admin em sessões antigas que não foram verificadas no Supabase
+      if (isAdminRole(user.role) && !user.isSupabaseVerifiedAdmin) {
+        user.role = 'motorista';
+        user.isSupabaseVerifiedAdmin = false;
+        localStorage.setItem('cabine_logged_user', JSON.stringify(user));
+      }
+      return user;
+    }
   } catch {
     // fallback
   }

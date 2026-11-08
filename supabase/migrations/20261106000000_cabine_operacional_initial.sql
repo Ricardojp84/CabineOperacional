@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     auth_user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     email TEXT NOT NULL UNIQUE,
-    role TEXT NOT NULL DEFAULT 'motorista_autonomo' CHECK (role IN ('motorista_autonomo', 'gestor_frota', 'motorista_agregado')),
+    role TEXT NOT NULL DEFAULT 'motorista_autonomo' CHECK (role IN ('motorista_autonomo', 'gestor_frota', 'motorista_agregado', 'administrador', 'admin', 'motorista')),
     rntrc TEXT,
     phone TEXT,
     truck_model TEXT NOT NULL DEFAULT 'Cavalo Mecânico 6x2',

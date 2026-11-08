@@ -205,8 +205,11 @@ const CORRIDORS: Record<string, { distanceKm: number; tollCount: number; tollPer
   'brasilia-santos': { distanceKm: 1080, tollCount: 11, tollPerAxle: 10.8, highways: 'BR-040 ➔ BR-050 ➔ SP-330 (Anhanguera) ➔ SP-160' },
 };
 
+import { calculatePreciseRoadDistance } from '../utils/brazilDistanceEngine';
+
 /**
  * Calculates road metrics with automatic round-trip (ida e volta) or one-way (somente ida) logic
+ * using precision Brazilian highway corridors and geodesic sinuosity algorithm.
  */
 export const calculateAdvancedRoute = (
   originText: string,
@@ -214,86 +217,5 @@ export const calculateAdvancedRoute = (
   axles: VehicleAxles = 6,
   tripType: TripType = 'somente_ida'
 ): CalculatedRouteResult => {
-  const normOrigin = originText.toLowerCase().split('-')[0].trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  const normDest = destText.toLowerCase().split('-')[0].trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-
-  const key1 = `${normOrigin}-${normDest}`;
-  const key2 = `${normDest}-${normOrigin}`;
-
-  let baseKm = 850;
-  let baseTolls = 7;
-  let tollPerAxle = 10.5;
-  let highways = 'Rodovias Federais e Estaduais';
-
-  if (CORRIDORS[key1]) {
-    const c = CORRIDORS[key1];
-    baseKm = c.distanceKm;
-    baseTolls = c.tollCount;
-    tollPerAxle = c.tollPerAxle;
-    highways = c.highways;
-  } else if (CORRIDORS[key2]) {
-    const c = CORRIDORS[key2];
-    baseKm = c.distanceKm;
-    baseTolls = c.tollCount;
-    tollPerAxle = c.tollPerAxle;
-    highways = c.highways;
-  } else {
-    // Find closest hubs in city database
-    const originCity = ALL_BRAZILIAN_CITIES.find(
-      (c) => c.city.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(normOrigin) ||
-             normOrigin.includes(c.city.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ''))
-    );
-    const destCity = ALL_BRAZILIAN_CITIES.find(
-      (c) => c.city.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(normDest) ||
-             normDest.includes(c.city.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ''))
-    );
-
-    if (originCity && destCity) {
-      const R = 6371;
-      const dLat = ((destCity.lat - originCity.lat) * Math.PI) / 180;
-      const dLon = ((destCity.lng - originCity.lng) * Math.PI) / 180;
-      const a =
-        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-        Math.cos((originCity.lat * Math.PI) / 180) *
-          Math.cos((destCity.lat * Math.PI) / 180) *
-          Math.sin(dLon / 2) *
-          Math.sin(dLon / 2);
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-      const straightKm = R * c;
-      baseKm = Math.round(straightKm * 1.32);
-      baseTolls = Math.max(1, Math.round(baseKm / 125));
-      tollPerAxle = 10.5;
-      highways = `${originCity.highways[0]} ➔ ${destCity.highways[0]}`;
-    }
-  }
-
-  const isRoundTrip = tripType === 'ida_e_volta';
-  const multiplier = isRoundTrip ? 2 : 1;
-
-  const totalKm = baseKm * multiplier;
-  const oneWayTollCost = Math.round(baseTolls * tollPerAxle * axles);
-  const totalTollCost = oneWayTollCost * multiplier;
-  const totalTollCount = baseTolls * multiplier;
-
-  const drivingHours = Math.round((totalKm / 68) * 10) / 10;
-  const estimatedDieselLiters = Math.round(totalKm / 2.2);
-  const avgDieselPricePerL = 6.25;
-  const estimatedDieselCost = Math.round(estimatedDieselLiters * avgDieselPricePerL);
-
-  return {
-    origin: originText,
-    destination: destText,
-    tripType,
-    oneWayDistanceKm: baseKm,
-    totalDistanceKm: totalKm,
-    oneWayTollCount: baseTolls,
-    totalTollCount,
-    oneWayTollCost,
-    totalTollCost,
-    highways: isRoundTrip ? `${highways} (Percurso de Ida e Volta)` : highways,
-    drivingHours,
-    estimatedDieselLiters,
-    estimatedDieselCost,
-    avgDieselPricePerL,
-  };
+  return calculatePreciseRoadDistance(originText, destText, axles, tripType);
 };

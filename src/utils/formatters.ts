@@ -126,13 +126,13 @@ export const getCargoLabel = (cargoType: CargoType): string => {
 
 export const getVehicleAxleLabel = (axles: VehicleAxles): string => {
   const map: Record<VehicleAxles, string> = {
-    2: 'Toco / 2 Eixos (PBT 16t)',
-    3: 'Truck / 3 Eixos (PBT 23t)',
-    4: 'Bitruck / 4 Eixos (PBT 29t)',
-    5: 'Cavalo + Carreta 2E / 5 Eixos (PBT 41.5t)',
-    6: 'Carreta LS 3E / 6 Eixos (PBT 48.5t)',
-    7: 'Bitrem / 7 Eixos (PBT 57t)',
-    9: 'Rodotrem / Bitrenzão / 9 Eixos (PBT 74t)',
+    2: '2 Eixos (VUC / Delivery / Hyundai HR / Toco)',
+    3: '3 Eixos (Truck 6x2)',
+    4: '4 Eixos (Bitruck 8x2 / 8x4)',
+    5: '5 Eixos (Cavalo + Carreta 2 Eixos)',
+    6: '6 Eixos (Cavalo 6x2/6x4 + Carreta 3 Eixos LS)',
+    7: '7 Eixos (Bitrem 7 Eixos)',
+    9: '9 Eixos (Rodotrem / Bitrenzão 9 Eixos)',
   };
   return map[axles] || `${axles} Eixos`;
 };

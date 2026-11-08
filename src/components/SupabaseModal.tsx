@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Trip, MaintenanceItem, User, isAdminRole } from '../types/cockpit';
+import { Trip, MaintenanceItem, User, isAdminRole, isUserAdmin } from '../types/cockpit';
 import {
   isSupabaseConfigured,
   saveSupabaseCredentials,
@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     auth_user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     email TEXT NOT NULL UNIQUE,
-    role TEXT NOT NULL DEFAULT 'motorista_autonomo' CHECK (role IN ('motorista_autonomo', 'gestor_frota', 'motorista_agregado')),
+    role TEXT NOT NULL DEFAULT 'motorista_autonomo' CHECK (role IN ('motorista_autonomo', 'gestor_frota', 'motorista_agregado', 'administrador', 'admin', 'motorista')),
     rntrc TEXT,
     phone TEXT,
     truck_model TEXT NOT NULL DEFAULT 'Scania R540 6x4 Super',
@@ -222,7 +222,7 @@ export const SupabaseModal: React.FC<SupabaseModalProps> = ({
 
   if (!isOpen) return null;
 
-  const isAdmin = isAdminRole(currentUser?.role);
+  const isAdmin = isUserAdmin(currentUser);
 
   // Security check: Block display and execution of Supabase command functions for non-admin users
   if (!isAdmin) {

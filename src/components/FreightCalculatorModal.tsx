@@ -226,7 +226,7 @@ export const FreightCalculatorModal: React.FC<FreightCalculatorModalProps> = ({
                 }}
                 className="w-full h-12 bg-[#081425] border-1.5 border-[#334155] focus:border-[#f59e0b] rounded-xl px-2.5 text-[#d8e3fb] font-bold text-xs outline-hidden"
               >
-                <option value={2}>2 Eixos - Toco</option>
+                <option value={2}>2 Eixos (VUC, Delivery, HR, Toco)</option>
                 <option value={3}>3 Eixos - Truck</option>
                 <option value={4}>4 Eixos - Bitruck</option>
                 <option value={5}>5 Eixos - Cavalo + Carreta</option>

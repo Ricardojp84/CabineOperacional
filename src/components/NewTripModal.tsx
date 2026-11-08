@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { CargoType, Trip, VehicleAxles, User, isAdminRole } from '../types/cockpit';
+import { CargoType, Trip, VehicleAxles, User, isAdminRole, isUserAdmin } from '../types/cockpit';
 import { formatCurrency, formatKm } from '../utils/formatters';
 import { playCockpitClick, playSuccessChime } from '../utils/audio';
 import { calculateAdvancedRoute, TripType } from '../data/brazilCitiesDatabase';
@@ -19,6 +19,7 @@ import {
   Globe,
   Loader2,
   Lock,
+  CheckCircle2,
 } from 'lucide-react';
 import { PRESET_TRIPS } from '../data/mockRoutes';
 
@@ -37,7 +38,7 @@ export const NewTripModal: React.FC<NewTripModalProps> = ({
   onCreateCustomTrip,
   currentUser,
 }) => {
-  const isAdmin = isAdminRole(currentUser?.role);
+  const isAdmin = isUserAdmin(currentUser);
   const [mode, setMode] = useState<'presets' | 'custom'>('presets');
 
   // Custom trip form states
@@ -503,6 +504,28 @@ export const NewTripModal: React.FC<NewTripModalProps> = ({
               </div>
             </div>
 
+            {/* Live Auto-fill KM Badge */}
+            {origin && destination && totalDistanceKm > 0 && (
+              <div className="p-3 rounded-xl bg-[#003824]/80 border border-[#10b981] flex flex-wrap items-center justify-between gap-2 text-xs text-[#a7f3d0] animate-in fade-in">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-[#34d399] shrink-0" />
+                  <span>
+                    KM Preenchido Automaticamente: <strong className="text-white font-mono font-black text-sm">{formatKm(totalDistanceKm)}</strong>
+                    {routeHighlights && (
+                      <span className="text-[#6ee7b7] text-[11px] ml-1.5 hidden md:inline">
+                        ({routeHighlights})
+                      </span>
+                    )}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-mono font-bold bg-[#081425] px-2 py-0.5 rounded text-[#4edea3] border border-[#009365]/50">
+                    Pedágios: {formatCurrency(estimatedTollCost)}
+                  </span>
+                </div>
+              </div>
+            )}
+
             {/* Trip Type Selector (Somente Ida vs Ida e Volta) */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-3 bg-[#081425] rounded-xl border border-[#334155]">
               <div className="space-y-0.5">
@@ -550,17 +573,56 @@ export const NewTripModal: React.FC<NewTripModalProps> = ({
               </div>
             </div>
 
-            {/* Calculated Distance and Toll Banner */}
-            <div className="p-3 rounded-xl bg-[#081425] border border-[#334155] flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
-              <div className="flex items-center gap-1.5 text-[#bec6e0]">
-                <Compass className="w-4 h-4 text-[#f59e0b]" />
-                <span>
-                  Distância Calculada: <strong className="text-[#d8e3fb] font-extrabold">{formatKm(totalDistanceKm)}</strong>
-                  {tripType === 'ida_e_volta' && <span className="text-[#4edea3] ml-1.5 font-bold">(Ida + Volta)</span>}
-                </span>
+            {/* Calculated & Editable Distance and Toll Banner */}
+            <div className="p-3 rounded-xl bg-[#081425] border border-[#334155] space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 text-xs text-[#d8e3fb] font-bold">
+                  <Compass className="w-4 h-4 text-[#f59e0b]" />
+                  <span>Quilometragem Total Prevista</span>
+                  {tripType === 'ida_e_volta' && (
+                    <span className="text-[10px] text-[#4edea3] font-bold px-1.5 py-0.5 rounded bg-[#003824] border border-[#10b981]/40">
+                      Ida e Volta
+                    </span>
+                  )}
+                </div>
+                <div className="text-xs text-[#4edea3] font-mono font-bold">
+                  Pedágios: {formatCurrency(estimatedTollCost)}
+                </div>
               </div>
-              <div className="text-[#4edea3] font-bold">
-                Pedágios: {formatCurrency(estimatedTollCost)}
+
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={totalDistanceKm}
+                    onChange={(e) => setTotalDistanceKm(Math.max(1, parseInt(e.target.value, 10) || 0))}
+                    className="w-full h-11 bg-[#152031] border-1.5 border-[#334155] focus:border-[#f59e0b] rounded-xl pl-3 pr-12 text-[#ffb95f] font-mono font-extrabold text-sm outline-hidden"
+                    title="Distância total rodoviária estimada em KM. Você pode ajustar manualmente conforme seu velocímetro ou rota desejada."
+                  />
+                  <span className="absolute right-3 top-3 text-xs font-mono font-bold text-[#94a3b8]">
+                    KM
+                  </span>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    playCockpitClick();
+                    if (origin && destination) {
+                      const calc = calculateAdvancedRoute(origin, destination, axles, tripType);
+                      setTotalDistanceKm(calc.totalDistanceKm);
+                      setEstimatedTollCost(calc.totalTollCost);
+                      setRouteHighlights(calc.highways);
+                    }
+                  }}
+                  className="h-11 px-3 bg-[#1e293b] hover:bg-[#243248] border border-[#f59e0b]/40 text-[#ffb95f] rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 active:scale-95"
+                  title="Recalcular distância rodoviária exata entre as cidades"
+                >
+                  <RotateCw className="w-3.5 h-3.5" />
+                  <span>Recalcular</span>
+                </button>
               </div>
             </div>
 
@@ -631,7 +693,7 @@ export const NewTripModal: React.FC<NewTripModalProps> = ({
                   onChange={(e) => setAxles(parseInt(e.target.value, 10) as VehicleAxles)}
                   className="w-full h-12 bg-[#081425] border-1.5 border-[#334155] focus:border-[#f59e0b] rounded-xl px-2 text-[#d8e3fb] text-xs font-bold outline-hidden"
                 >
-                  <option value={2}>2 Eixos - Toco</option>
+                  <option value={2}>2 Eixos (VUC, Delivery, HR, Toco)</option>
                   <option value={3}>3 Eixos - Truck</option>
                   <option value={4}>4 Eixos - Bitruck</option>
                   <option value={5}>5 Eixos - Cavalo + Carreta</option>
@@ -702,17 +764,44 @@ export const NewTripModal: React.FC<NewTripModalProps> = ({
                 <div className="flex gap-2">
                   <input
                     type="text"
+                    list="new-trip-models"
                     value={vehicleModel}
                     onChange={(e) => setVehicleModel(e.target.value)}
-                    placeholder="Modelo"
+                    placeholder="Ex: Hyundai HR, VW Delivery 11.180, Scania R540..."
                     className="flex-1 h-12 bg-[#081425] border-1.5 border-[#334155] focus:border-[#f59e0b] rounded-xl px-3 text-[#d8e3fb] text-xs font-bold outline-hidden"
                   />
+                  <datalist id="new-trip-models">
+                    <option value="Hyundai HR 2.5 Turbo" />
+                    <option value="Volkswagen Delivery Express" />
+                    <option value="Volkswagen Delivery 9.170" />
+                    <option value="Volkswagen Delivery 11.180" />
+                    <option value="Kia Bongo K2500" />
+                    <option value="Mercedes-Benz Accelo 815" />
+                    <option value="Mercedes-Benz Accelo 1016" />
+                    <option value="Iveco Daily 35-150 / 65-170" />
+                    <option value="Ford Cargo 816 / F-4000" />
+                    <option value="Volkswagen Constellation 14.190" />
+                    <option value="Mercedes-Benz Atego 1419" />
+                    <option value="Volkswagen Constellation 24.280" />
+                    <option value="Mercedes-Benz Atego 2426" />
+                    <option value="Volvo VM 330 8x2" />
+                    <option value="Scania R540 6x4 Super" />
+                    <option value="Volvo FH 540 6x4 Globetrotter" />
+                    <option value="Mercedes-Benz Actros 2651 6x4" />
+                    <option value="DAF XF 530 6x4 Super Space Cab" />
+                    <option value="Volkswagen Meteor 29.520 6x4" />
+                    <option value="Scania R450 6x2" />
+                    <option value="Volvo FH 460 6x2" />
+                    <option value="Iveco S-Way 540 6x4" />
+                    <option value="Bitrem 7 Eixos" />
+                    <option value="Rodotrem 9 Eixos" />
+                  </datalist>
                   <input
                     type="text"
                     value={vehiclePlate}
-                    onChange={(e) => setVehiclePlate(e.target.value)}
+                    onChange={(e) => setVehiclePlate(e.target.value.toUpperCase())}
                     placeholder="Placa"
-                    className="w-28 h-12 bg-[#081425] border-1.5 border-[#334155] focus:border-[#f59e0b] rounded-xl px-3 text-[#ffb95f] text-xs font-mono font-bold outline-hidden"
+                    className="w-28 h-12 bg-[#081425] border-1.5 border-[#334155] focus:border-[#f59e0b] rounded-xl px-3 text-[#ffb95f] text-xs font-mono font-bold outline-hidden uppercase"
                   />
                 </div>
               </div>

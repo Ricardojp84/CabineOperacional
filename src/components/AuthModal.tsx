@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { User, UserRole, isAdminRole, isDriverRole } from '../types/cockpit';
+import { User, UserRole, isAdminRole, isDriverRole, isUserAdmin } from '../types/cockpit';
 import {
   getUsersFromStorage,
   saveUsersToStorage,
@@ -8,6 +8,15 @@ import {
   resendVerificationToken,
 } from '../data/mockUsers';
 import { playCockpitClick, playSuccessChime, playAlertBeep } from '../utils/audio';
+import {
+  authenticateSupabaseAdmin,
+  getSupabaseAdminSqlSnippet,
+} from '../services/supabaseAuthService';
+import {
+  isSupabaseConfigured,
+  getStoredCredentials,
+  getSupabaseProjectId,
+} from '../lib/supabase';
 import {
   Lock,
   User as UserIcon,
@@ -30,7 +39,11 @@ import {
   RefreshCw,
   Sparkles,
   ShieldCheck,
+  ShieldAlert,
   Info,
+  Database,
+  Code2,
+  Loader2,
 } from 'lucide-react';
 
 interface AuthModalProps {
@@ -39,6 +52,7 @@ interface AuthModalProps {
   onLoginSuccess: (user: User) => void;
   currentUser?: User | null;
   allowClose?: boolean;
+  onOpenSupabaseModal?: () => void;
 }
 
 export const AuthModal: React.FC<AuthModalProps> = ({
@@ -47,6 +61,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   onLoginSuccess,
   currentUser,
   allowClose = true,
+  onOpenSupabaseModal,
 }) => {
   const [mode, setMode] = useState<'login' | 'register' | 'verification_pending'>('login');
   const [emailInput, setEmailInput] = useState('');
@@ -73,13 +88,45 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   const usersList = getUsersFromStorage();
 
-  const handleLogin = (e: React.FormEvent) => {
+  const [isAuthenticatingAdmin, setIsAuthenticatingAdmin] = useState(false);
+  const [showAdminSqlHelper, setShowAdminSqlHelper] = useState(false);
+  const [copiedSql, setCopiedSql] = useState(false);
+
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
 
     const trimmedEmail = emailInput.trim().toLowerCase();
     const trimmedPass = passwordInput.trim();
 
+    // 1. AUTENTICAÇÃO EXCLUSIVA DE ADMINISTRADOR VIA SUPABASE
+    if (loginRoleFilter === 'admin') {
+      setIsAuthenticatingAdmin(true);
+      try {
+        const result = await authenticateSupabaseAdmin(trimmedEmail, trimmedPass);
+        if (result.success && result.user) {
+          playSuccessChime();
+          onLoginSuccess(result.user);
+          if (onClose) onClose();
+          return;
+        } else {
+          playAlertBeep();
+          setErrorMessage(
+            result.error ||
+              'Acesso negado. Esta conta não possui perfil de Administrador cadastrado no banco Supabase.'
+          );
+          return;
+        }
+      } catch (err: any) {
+        playAlertBeep();
+        setErrorMessage(`Falha na autenticação via Supabase: ${err.message || 'Erro de comunicação'}`);
+        return;
+      } finally {
+        setIsAuthenticatingAdmin(false);
+      }
+    }
+
+    // 2. LOGIN OPERACIONAL DE MOTORISTA (LOCAL)
     const found = usersList.find(
       (u) =>
         (u.email.toLowerCase() === trimmedEmail || u.email.split('@')[0].toLowerCase() === trimmedEmail) &&
@@ -104,7 +151,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       if (onClose) onClose();
     } else {
       playAlertBeep();
-      setErrorMessage('Login ou senha incorretos. Use uma das contas de teste ou crie uma nova conta.');
+      setErrorMessage('Login ou senha incorretos para a conta de motorista.');
     }
   };
 
@@ -514,61 +561,171 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               <div className="pt-1">
                 <button
                   type="submit"
+                  disabled={isAuthenticatingAdmin}
                   className={`w-full h-14 min-h-[56px] rounded-xl font-extrabold text-base flex items-center justify-center gap-2.5 active:scale-[0.99] transition-all cursor-pointer shadow-lg ${
                     loginRoleFilter === 'motorista'
                       ? 'bg-[#10b981] hover:bg-[#059669] text-[#022c22] shadow-emerald-500/25'
                       : 'bg-[#f59e0b] hover:bg-[#d97706] text-[#0f172a] shadow-amber-500/25'
-                  }`}
+                  } ${isAuthenticatingAdmin ? 'opacity-80 cursor-wait' : ''}`}
                 >
-                  <LogIn className="w-5 h-5 stroke-[2.5]" />
-                  <span>
-                    {loginRoleFilter === 'motorista' ? 'Entrar como Motorista' : 'Entrar como Administrador'}
-                  </span>
+                  {isAuthenticatingAdmin ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      <span>Validando no Supabase...</span>
+                    </>
+                  ) : (
+                    <>
+                      <LogIn className="w-5 h-5 stroke-[2.5]" />
+                      <span>
+                        {loginRoleFilter === 'motorista' ? 'Entrar como Motorista' : 'Entrar com Supabase (Admin)'}
+                      </span>
+                    </>
+                  )}
                 </button>
               </div>
             </form>
 
             {/* Quick Demo Accounts Helper (Filtered by selected role) */}
             <div className="mt-4 pt-4 border-t border-[#334155]/80">
-              <span className="block text-[11px] font-extrabold uppercase tracking-wider text-[#94a3b8] mb-2 flex items-center gap-1.5">
-                <Shield className="w-3.5 h-3.5 text-[#4edea3]" />
-                Contas Pré-configuradas ({loginRoleFilter === 'motorista' ? 'Motoristas' : 'Administradores'})
-              </span>
+              {loginRoleFilter === 'motorista' ? (
+                <>
+                  <span className="block text-[11px] font-extrabold uppercase tracking-wider text-[#94a3b8] mb-2 flex items-center gap-1.5">
+                    <Truck className="w-3.5 h-3.5 text-[#10b981]" />
+                    Contas Pré-configuradas (Motoristas de Teste)
+                  </span>
 
-              <div className="space-y-2">
-                {usersList
-                  .filter((u) => (loginRoleFilter === 'admin' ? isAdminRole(u.role) : isDriverRole(u.role)))
-                  .map((u) => (
+                  <div className="space-y-2">
+                    {usersList
+                      .filter((u) => !isAdminRole(u.role))
+                      .map((u) => (
+                        <button
+                          key={u.id}
+                          type="button"
+                          onClick={() => handleQuickDemoLogin(u)}
+                          className="w-full p-3 rounded-xl bg-[#1e293b] hover:bg-[#243248] border border-[#334155] hover:border-[#10b981] flex items-center justify-between text-left transition-all cursor-pointer group"
+                        >
+                          <div className="min-w-0">
+                            <div className="font-extrabold text-xs text-[#d8e3fb] group-hover:text-[#4edea3] flex items-center gap-1.5">
+                              <Truck className="w-3.5 h-3.5 text-[#10b981]" />
+                              <span>{u.name}</span>
+                            </div>
+                            <div className="text-[11px] text-[#94a3b8] truncate font-mono mt-0.5">
+                              Login: <strong className="text-[#bec6e0]">{u.email}</strong> • Senha:{' '}
+                              <strong className="text-[#ffb95f]">{u.password}</strong>
+                            </div>
+                            <div className="text-[10px] text-[#798098] mt-0.5">
+                              {u.truckModel} • Placa: {u.truckPlate}
+                            </div>
+                          </div>
+                          <div className="shrink-0 flex items-center gap-1 text-xs font-bold text-[#10b981]">
+                            <span>Entrar</span>
+                            <ArrowRight className="w-3.5 h-3.5" />
+                          </div>
+                        </button>
+                      ))}
+                  </div>
+                </>
+              ) : (
+                <div className="space-y-3">
+                  <span className="block text-[11px] font-extrabold uppercase tracking-wider text-[#ffb95f] mb-1.5 flex items-center gap-1.5">
+                    <ShieldCheck className="w-3.5 h-3.5 text-[#ffb95f]" />
+                    Regra de Segurança: Administradores Exclusivos do SUPABASE
+                  </span>
+
+                  <div className="p-3.5 rounded-xl bg-[#081425] border border-[#f59e0b]/40 space-y-2.5">
+                    <div className="flex items-start gap-2.5">
+                      <ShieldAlert className="w-5 h-5 text-[#f59e0b] shrink-0 mt-0.5" />
+                      <div className="space-y-1">
+                        <h4 className="text-xs font-black text-[#d8e3fb]">
+                          Contas Pré-configuradas de Administrador Removidas
+                        </h4>
+                        <p className="text-[11px] text-[#94a3b8] leading-relaxed">
+                          O sistema agora <strong>rejeita qualquer conta pré-configurada ou local</strong> como Administrador. Somente contas cadastradas com permissão de administrador no <strong>SUPABASE</strong> são aceitas.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="pt-2 border-t border-[#334155]/60 flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 text-[11px]">
+                        <span className="font-mono text-[#94a3b8]">Status Supabase:</span>
+                        {isSupabaseConfigured ? (
+                          <span className="text-[#34d399] font-bold flex items-center gap-1 bg-[#064e3b] px-2 py-0.5 rounded border border-[#10b981]/40">
+                            <Check className="w-3 h-3" />
+                            Conectado ({getSupabaseProjectId(getStoredCredentials().url) || 'Ativo'})
+                          </span>
+                        ) : (
+                          <span className="text-[#f87171] font-bold flex items-center gap-1 bg-[#450a0a] px-2 py-0.5 rounded border border-[#ef4444]/40">
+                            <AlertCircle className="w-3 h-3" />
+                            Não Conectado
+                          </span>
+                        )}
+                      </div>
+
+                      {onOpenSupabaseModal && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            playCockpitClick();
+                            if (onClose) onClose();
+                            onOpenSupabaseModal();
+                          }}
+                          className="text-[11px] font-bold px-2.5 py-1 rounded-md bg-[#2563eb] hover:bg-[#1d4ed8] text-white flex items-center gap-1 cursor-pointer transition-colors"
+                          title="Abrir configurações de conexão do Supabase"
+                        >
+                          <Database className="w-3 h-3" />
+                          <span>Painel Supabase</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* SQL Helper Box */}
+                  <div className="rounded-xl border border-[#334155] bg-[#0c1322] overflow-hidden">
                     <button
-                      key={u.id}
                       type="button"
-                      onClick={() => handleQuickDemoLogin(u)}
-                      className="w-full p-3 rounded-xl bg-[#1e293b] hover:bg-[#243248] border border-[#334155] hover:border-[#f59e0b] flex items-center justify-between text-left transition-all cursor-pointer group"
+                      onClick={() => {
+                        playCockpitClick();
+                        setShowAdminSqlHelper(!showAdminSqlHelper);
+                      }}
+                      className="w-full p-2.5 px-3 flex items-center justify-between text-left text-xs font-bold text-[#ffb95f] hover:text-[#ffd699] transition-colors cursor-pointer"
                     >
-                      <div className="min-w-0">
-                        <div className="font-extrabold text-xs text-[#d8e3fb] group-hover:text-[#ffb95f] flex items-center gap-1.5">
-                          {isAdminRole(u.role) ? (
-                            <ShieldCheck className="w-3.5 h-3.5 text-[#ffb95f]" />
-                          ) : (
-                            <Truck className="w-3.5 h-3.5 text-[#10b981]" />
-                          )}
-                          <span>{u.name}</span>
-                        </div>
-                        <div className="text-[11px] text-[#94a3b8] truncate font-mono mt-0.5">
-                          Login: <strong className="text-[#bec6e0]">{u.email}</strong> • Senha:{' '}
-                          <strong className="text-[#ffb95f]">{u.password}</strong>
-                        </div>
-                        <div className="text-[10px] text-[#798098] mt-0.5">
-                          {u.truckModel} • Placa: {u.truckPlate}
-                        </div>
-                      </div>
-                      <div className="shrink-0 flex items-center gap-1 text-xs font-bold text-[#f59e0b]">
-                        <span>Entrar</span>
-                        <ArrowRight className="w-3.5 h-3.5" />
-                      </div>
+                      <span className="flex items-center gap-1.5">
+                        <Code2 className="w-3.5 h-3.5 text-[#f59e0b]" />
+                        Como cadastrar seu e-mail como Administrador no Supabase (SQL)
+                      </span>
+                      <span className="text-[11px] text-[#94a3b8]">{showAdminSqlHelper ? 'Ocultar' : 'Ver SQL'}</span>
                     </button>
-                  ))}
-              </div>
+
+                    {showAdminSqlHelper && (
+                      <div className="p-3 pt-0 border-t border-[#334155]/60 space-y-2">
+                        <p className="text-[11px] text-[#94a3b8]">
+                          Execute este comando no <strong>SQL Editor</strong> do seu painel Supabase para cadastrar o e-mail como Administrador:
+                        </p>
+                        <div className="relative">
+                          <pre className="p-2.5 rounded-lg bg-[#081425] border border-[#334155] font-mono text-[10px] text-[#38bdf8] overflow-x-auto whitespace-pre">
+                            {getSupabaseAdminSqlSnippet(emailInput || 'ricardo.jr.pinheiro@gmail.com', 'Ricardo Pinheiro')}
+                          </pre>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(
+                                getSupabaseAdminSqlSnippet(emailInput || 'ricardo.jr.pinheiro@gmail.com', 'Ricardo Pinheiro')
+                              );
+                              setCopiedSql(true);
+                              playCockpitClick();
+                              setTimeout(() => setCopiedSql(false), 3000);
+                            }}
+                            className="absolute top-2 right-2 px-2 py-1 rounded bg-[#1e293b] hover:bg-[#243248] border border-[#334155] text-[10px] font-bold text-white flex items-center gap-1 cursor-pointer"
+                          >
+                            {copiedSql ? <Check className="w-3 h-3 text-[#10b981]" /> : <Copy className="w-3 h-3" />}
+                            <span>{copiedSql ? 'Copiado!' : 'Copiar'}</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -630,12 +787,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   onChange={(e) => setRegRole(e.target.value as UserRole)}
                   className="w-full h-12 bg-[#081425] border-1.5 border-[#334155] focus:border-[#f59e0b] rounded-xl px-2.5 text-[#d8e3fb] font-bold text-xs outline-hidden"
                 >
-                  <option value="motorista">Motorista (Operacional básico de rota e tacógrafo)</option>
-                  <option value="administrador">Administrador do Sistema (Acesso total)</option>
+                  <option value="motorista">Motorista (Operacional de rota, cargas e tacógrafo)</option>
                   <option value="motorista_autonomo">Motorista Autônomo (TAC)</option>
-                  <option value="gestor_frota">Gestor de Frota / Transportadora</option>
                   <option value="motorista_agregado">Motorista Agregado</option>
                 </select>
+                <p className="text-[10px] text-[#94a3b8] mt-1">
+                  * Contas de Administrador são restritas e cadastradas exclusivamente via banco Supabase.
+                </p>
               </div>
 
               <div>

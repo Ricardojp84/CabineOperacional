@@ -426,6 +426,8 @@ const CORRIDOR_DATABASE: Record<string, RouteData> = {
   },
 };
 
+import { calculatePreciseRoadDistance } from '../utils/brazilDistanceEngine';
+
 /**
  * Calculates road distance, toll count and cost for any Brazilian origin/destination
  */
@@ -440,78 +442,13 @@ export const calculateRoadDistanceAndTolls = (
   highways: string;
   isExactCorridor: boolean;
 } => {
-  const normOrigin = originText.toLowerCase().split('-')[0].trim();
-  const normDest = destText.toLowerCase().split('-')[0].trim();
-
-  const key1 = `${normOrigin}-${normDest}`;
-  const key2 = `${normDest}-${normOrigin}`;
-
-  if (CORRIDOR_DATABASE[key1]) {
-    const d = CORRIDOR_DATABASE[key1];
-    return {
-      distanceKm: d.distanceKm,
-      tollCount: d.tollCount,
-      totalTollCost: Math.round(d.tollCount * d.tollBaseCostPerAxle * axles),
-      highways: d.highways,
-      isExactCorridor: true,
-    };
-  }
-
-  if (CORRIDOR_DATABASE[key2]) {
-    const d = CORRIDOR_DATABASE[key2];
-    return {
-      distanceKm: d.distanceKm,
-      tollCount: d.tollCount,
-      totalTollCost: Math.round(d.tollCount * d.tollBaseCostPerAxle * axles),
-      highways: d.highways,
-      isExactCorridor: true,
-    };
-  }
-
-  // Geodesic calculation fallback using coordinate hubs
-  const originHub = BRAZIL_FREIGHT_HUBS.find(
-    (h) => h.city.toLowerCase() === normOrigin || normOrigin.includes(h.city.toLowerCase())
-  );
-  const destHub = BRAZIL_FREIGHT_HUBS.find(
-    (h) => h.city.toLowerCase() === normDest || normDest.includes(h.city.toLowerCase())
-  );
-
-  if (originHub && destHub) {
-    // Haversine formula * 1.35 factor for road winding in Brazil
-    const R = 6371;
-    const dLat = ((destHub.lat - originHub.lat) * Math.PI) / 180;
-    const dLon = ((destHub.lng - originHub.lng) * Math.PI) / 180;
-    const a =
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos((originHub.lat * Math.PI) / 180) *
-        Math.cos((destHub.lat * Math.PI) / 180) *
-        Math.sin(dLon / 2) *
-        Math.sin(dLon / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    const straightKm = R * c;
-    const roadKm = Math.round(straightKm * 1.32);
-
-    // Estimate tolls: roughly 1 toll plaza every 110-140 km in concession corridors
-    const estimatedTollCount = Math.max(1, Math.round(roadKm / 125));
-    const tollPerAxle = 10.5;
-    const totalTolls = Math.round(estimatedTollCount * tollPerAxle * axles);
-
-    return {
-      distanceKm: roadKm,
-      tollCount: estimatedTollCount,
-      totalTollCost: totalTolls,
-      highways: `${originHub.highways[0]} ➔ ${destHub.highways[0]}`,
-      isExactCorridor: false,
-    };
-  }
-
-  // Generic fallback if text not in hub database
+  const result = calculatePreciseRoadDistance(originText, destText, axles, 'somente_ida');
   return {
-    distanceKm: 850,
-    tollCount: 7,
-    totalTollCost: Math.round(7 * 10.5 * axles),
-    highways: 'Rodovias Federais / Estaduais',
-    isExactCorridor: false,
+    distanceKm: result.oneWayDistanceKm,
+    tollCount: result.oneWayTollCount,
+    totalTollCost: result.oneWayTollCost,
+    highways: result.highways,
+    isExactCorridor: result.isExactCorridor,
   };
 };
 

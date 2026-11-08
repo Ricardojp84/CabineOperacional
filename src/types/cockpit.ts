@@ -143,10 +143,22 @@ export const isAdminRole = (role?: UserRole | string | null): boolean => {
 };
 
 /**
+ * Checks if a user is an authenticated and verified Supabase Administrator.
+ * In accordance with the strict security policy:
+ * - Pre-configured administrator accounts are revoked.
+ * - ONLY accounts registered and verified in SUPABASE (isSupabaseVerifiedAdmin === true)
+ *   are accepted as administrators.
+ */
+export const isUserAdmin = (user?: User | null): boolean => {
+  if (!user) return false;
+  return Boolean(user.isSupabaseVerifiedAdmin && isAdminRole(user.role));
+};
+
+/**
  * Checks if the given role or user is a Driver with operational-only permissions
  */
 export const isDriverRole = (role?: UserRole | string | null): boolean => {
-  return !isAdminRole(role);
+  return !isUserAdmin({ role: (role as UserRole) || 'motorista', id: '', name: '', email: '', truckModel: '', truckPlate: '', createdAt: '' });
 };
 
 export interface User {
@@ -164,4 +176,36 @@ export interface User {
   isEmailVerified?: boolean;
   verificationToken?: string;
   createdAt: string;
+  // Supabase Verification fields
+  supabaseUserId?: string;
+  isSupabaseVerifiedAdmin?: boolean;
+  authProvider?: 'local' | 'supabase';
 }
+
+export type DriverDocumentType =
+  | 'cnh'
+  | 'ear'
+  | 'toxicologico'
+  | 'mopp'
+  | 'rntrc_antt'
+  | 'crlv_veiculo'
+  | 'cronotacografo'
+  | 'outros';
+
+export type DriverDocumentStatus = 'valido' | 'alerta' | 'vencido';
+
+export interface DriverDocumentReminder {
+  id: string;
+  type: DriverDocumentType;
+  title: string;
+  documentNumber?: string;
+  categoryOrDetails?: string; // ex: "Categoria E", "Resolução CONTRAN 922/2022"
+  dueDate: string; // YYYY-MM-DD
+  issueDate?: string; // YYYY-MM-DD
+  notes?: string;
+  alertDaysThreshold: number; // Dias antes do vencimento para alertar (ex: 30)
+  driverName?: string;
+  laboratoryOrIssuer?: string; // ex: "Laboratório Credenciado SENATRAN", "DETRAN-SP"
+  lastRenewedAt?: string;
+}
+

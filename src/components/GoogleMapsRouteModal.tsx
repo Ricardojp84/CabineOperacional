@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { APIProvider, Map, AdvancedMarker, Pin } from '@vis.gl/react-google-maps';
 import { calculateAdvancedRoute, TripType, ALL_BRAZILIAN_CITIES } from '../data/brazilCitiesDatabase';
 import { formatCurrency, formatKm } from '../utils/formatters';
@@ -53,8 +53,16 @@ export const GoogleMapsRouteModal: React.FC<GoogleMapsRouteModalProps> = ({
 
   const mapsApiKey = (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_GOOGLE_MAPS_API_KEY || '';
 
+  const [customDistanceKm, setCustomDistanceKm] = useState<number | null>(null);
+
   // Calculate metrics with automatic round-trip or one-way logic
   const routeData = calculateAdvancedRoute(origin, destination, axles, tripType);
+  const effectiveDistanceKm = customDistanceKm !== null ? customDistanceKm : routeData.totalDistanceKm;
+
+  // Reset custom distance when origin/destination/tripType change
+  useEffect(() => {
+    setCustomDistanceKm(null);
+  }, [origin, destination, tripType]);
 
   // Find coordinates for origin and destination from comprehensive cities database
   const originHub = ALL_BRAZILIAN_CITIES.find((c) =>
@@ -91,7 +99,7 @@ export const GoogleMapsRouteModal: React.FC<GoogleMapsRouteModalProps> = ({
     onApplyRoute({
       origin,
       destination,
-      distanceKm: routeData.totalDistanceKm,
+      distanceKm: effectiveDistanceKm,
       tollCount: routeData.totalTollCount,
       totalTollCost: routeData.totalTollCost,
       highways: routeData.highways,
@@ -241,14 +249,23 @@ export const GoogleMapsRouteModal: React.FC<GoogleMapsRouteModalProps> = ({
         {/* Live Metrics Grid from Google Maps Corridor Engine */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 my-4">
           <div className="p-3 rounded-xl bg-[#081425] border border-[#334155]">
-            <div className="text-[10px] font-bold uppercase text-[#94a3b8] flex items-center gap-1">
-              <Navigation className="w-3 h-3 text-[#f59e0b]" /> Distância Total
+            <div className="text-[10px] font-bold uppercase text-[#94a3b8] flex items-center justify-between">
+              <span className="flex items-center gap-1"><Navigation className="w-3 h-3 text-[#f59e0b]" /> Distância Total</span>
             </div>
-            <div className="font-mono text-xl font-extrabold text-[#d8e3fb] mt-0.5">
-              {formatKm(routeData.totalDistanceKm)}
+            <div className="mt-1 flex items-center gap-1">
+              <input
+                type="number"
+                min="1"
+                step="1"
+                value={effectiveDistanceKm}
+                onChange={(e) => setCustomDistanceKm(Math.max(1, parseInt(e.target.value, 10) || 0))}
+                className="w-full bg-[#152031] border border-[#334155] focus:border-[#f59e0b] rounded-lg px-2 py-0.5 text-[#d8e3fb] font-mono text-base font-extrabold outline-hidden"
+                title="Você pode ajustar manualmente a quilometragem conforme o velocímetro"
+              />
+              <span className="text-xs font-mono font-bold text-[#ffb95f]">KM</span>
             </div>
-            <div className="text-[10px] text-[#94a3b8] truncate font-mono">
-              {tripType === 'ida_e_volta' ? `2x de ${formatKm(routeData.oneWayDistanceKm)}` : 'Trecho de ida'}
+            <div className="text-[10px] text-[#94a3b8] truncate font-mono mt-0.5">
+              {tripType === 'ida_e_volta' ? `2x de ${formatKm(Math.round(effectiveDistanceKm / 2))}` : 'Trecho de ida'}
             </div>
           </div>
 
@@ -378,7 +395,7 @@ export const GoogleMapsRouteModal: React.FC<GoogleMapsRouteModalProps> = ({
             className="flex-1 h-14 min-h-[56px] rounded-xl bg-[#f59e0b] hover:bg-[#d97706] text-[#0f172a] font-extrabold text-sm sm:text-base flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 active:scale-[0.99] transition-all cursor-pointer"
           >
             <Check className="w-5 h-5 stroke-[3]" />
-            <span>Sincronizar no Cockpit ({formatKm(routeData.totalDistanceKm)})</span>
+            <span>Sincronizar no Cockpit ({formatKm(effectiveDistanceKm)})</span>
           </button>
         </div>
       </div>

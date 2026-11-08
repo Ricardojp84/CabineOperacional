@@ -1,7 +1,15 @@
-import React, { useState, useMemo } from 'react';
-import { MaintenanceItem, MaintenanceComponent, Expense } from '../types/cockpit';
+import React, { useState, useMemo, useEffect } from 'react';
+import { MaintenanceItem, MaintenanceComponent, Expense, User, DriverDocumentReminder } from '../types/cockpit';
 import { formatCurrency, formatOdometer } from '../utils/formatters';
 import { playCockpitClick, playSuccessChime, playAlertBeep } from '../utils/audio';
+import { generateMaintenancePdf } from '../utils/maintenancePdfGenerator';
+import { DriverDocumentSection } from './DriverDocumentSection';
+import {
+  loadDriverDocuments,
+  saveDriverDocuments,
+  calculateDaysRemaining,
+  getCriticalDocumentAlerts,
+} from '../services/driverDocumentService';
 import {
   Wrench,
   AlertTriangle,
@@ -30,6 +38,8 @@ import {
   Sparkles,
   Receipt,
   FileText,
+  FileCheck,
+  FileDown,
   Lock,
   Smartphone,
   Radio,
@@ -53,6 +63,12 @@ interface MaintenanceDashboardProps {
   onUpdateMaintenance: (items: MaintenanceItem[]) => void;
   onUpdateOdometer: (newOdometer: number) => void;
   onAddExpense?: (expense: Omit<Expense, 'id'>) => void;
+  vehicleModel?: string;
+  vehiclePlate?: string;
+  currentUser?: User | null;
+  driverDocuments?: DriverDocumentReminder[];
+  onUpdateDriverDocuments?: (docs: DriverDocumentReminder[]) => void;
+  initialSubTab?: 'alertas' | 'documentos' | 'todos' | 'pneus' | 'oficina';
 }
 
 export const MaintenanceDashboard: React.FC<MaintenanceDashboardProps> = ({
@@ -61,10 +77,41 @@ export const MaintenanceDashboard: React.FC<MaintenanceDashboardProps> = ({
   onUpdateMaintenance,
   onUpdateOdometer,
   onAddExpense,
+  vehicleModel = 'Scania R540 6x4 Super',
+  vehiclePlate = 'BRA-2026',
+  currentUser,
+  driverDocuments,
+  onUpdateDriverDocuments,
+  initialSubTab = 'alertas',
 }) => {
   // Navigation sub-tabs inside Maintenance Dashboard
-  const [subTab, setSubTab] = useState<'alertas' | 'todos' | 'pneus' | 'oficina'>('alertas');
+  const [subTab, setSubTab] = useState<'alertas' | 'documentos' | 'todos' | 'pneus' | 'oficina'>(
+    initialSubTab || 'alertas'
+  );
   const [categoryFilter, setCategoryFilter] = useState<string>('todos');
+
+  // Synchronize initialSubTab if changed from parent
+  useEffect(() => {
+    if (initialSubTab) {
+      setSubTab(initialSubTab);
+    }
+  }, [initialSubTab]);
+
+  // Driver documents internal state fallback
+  const [localDocs, setLocalDocs] = useState<DriverDocumentReminder[]>(() => loadDriverDocuments());
+  const docsToUse = driverDocuments || localDocs;
+
+  const handleUpdateDocs = (updated: DriverDocumentReminder[]) => {
+    setLocalDocs(updated);
+    if (onUpdateDriverDocuments) {
+      onUpdateDriverDocuments(updated);
+    }
+    saveDriverDocuments(updated);
+  };
+
+  const criticalDocsInAlert = useMemo(() => {
+    return getCriticalDocumentAlerts(docsToUse);
+  }, [docsToUse]);
 
   // Odometer editing state
   const [odometerInput, setOdometerInput] = useState<string>(currentOdometer.toString());
@@ -164,6 +211,32 @@ export const MaintenanceDashboard: React.FC<MaintenanceDashboardProps> = ({
     if (sent) {
       playSuccessChime();
       setActionNotice('Alerta crítico de manutenção emitido com vibração de cabine!');
+    }
+  };
+
+  // PDF Generation State and Handler
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+
+  const handleGeneratePdf = () => {
+    playCockpitClick();
+    setIsGeneratingPdf(true);
+    try {
+      generateMaintenancePdf({
+        maintenanceItems,
+        currentOdometer,
+        vehicleModel,
+        vehiclePlate,
+        currentUser,
+      });
+      playSuccessChime();
+      setActionNotice('Relatório em PDF de manutenção gerado com sucesso! Arquivo baixado para a gestão da frota.');
+      setTimeout(() => setActionNotice(null), 6000);
+    } catch (err) {
+      console.error('Erro ao gerar PDF de manutenção:', err);
+      playAlertBeep();
+      setActionNotice('Erro ao gerar relatório em PDF de manutenção.');
+    } finally {
+      setIsGeneratingPdf(false);
     }
   };
 
@@ -373,7 +446,18 @@ export const MaintenanceDashboard: React.FC<MaintenanceDashboardProps> = ({
           </div>
 
           {/* Top Actions: Add New Item & Odometer */}
+          {/* Top Actions: Add New Item, PDF Report & Odometer */}
           <div className="flex items-center gap-2">
+            <button
+              onClick={handleGeneratePdf}
+              disabled={isGeneratingPdf}
+              className="h-10 px-3.5 bg-[#1d4ed8] hover:bg-[#1e40af] text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-all cursor-pointer shadow-md shadow-blue-900/30 active:scale-95 disabled:opacity-50"
+              title="Gerar e baixar relatório técnico em PDF (Histórico de revisões e cronograma das próximas)"
+            >
+              <FileDown className="w-4 h-4" />
+              <span>{isGeneratingPdf ? 'Gerando...' : 'Relatório PDF'}</span>
+            </button>
+
             <button
               onClick={() => {
                 playCockpitClick();
@@ -460,6 +544,28 @@ export const MaintenanceDashboard: React.FC<MaintenanceDashboardProps> = ({
                 }`}
               >
                 {alertItemsCount}
+              </span>
+            )}
+          </button>
+
+          {/* Sub-tab: Lembretes de Documentação (CNH, EAR, Exame Toxicológico) */}
+          <button
+            type="button"
+            onClick={() => {
+              playCockpitClick();
+              setSubTab('documentos');
+            }}
+            className={`flex-1 min-w-[170px] h-10 rounded-lg text-xs font-extrabold transition-all cursor-pointer flex items-center justify-center gap-2 relative ${
+              subTab === 'documentos'
+                ? 'bg-[#1e293b] text-[#ffb95f] border border-[#ffb95f]/60 shadow-xs'
+                : 'text-[#94a3b8] hover:text-[#d8e3fb]'
+            }`}
+          >
+            <FileCheck className="w-4 h-4 text-[#ec4899]" />
+            <span>Documentação & CNH</span>
+            {criticalDocsInAlert.length > 0 && (
+              <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-[#ef4444] text-white animate-pulse">
+                {criticalDocsInAlert.length}
               </span>
             )}
           </button>
@@ -645,6 +751,55 @@ export const MaintenanceDashboard: React.FC<MaintenanceDashboardProps> = ({
               </div>
             </div>
           </div>
+
+          {/* Alerta de Documentação do Condutor na aba Alertas */}
+          {criticalDocsInAlert.length > 0 && (
+            <div className="p-4 rounded-2xl bg-gradient-to-r from-[#450a0a] via-[#3f2500] to-[#1e1b4b] border-2 border-[#ef4444] shadow-xl text-white space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  <div className="p-2.5 rounded-xl bg-[#690005] border border-[#ef4444] text-[#ffb4ab] shrink-0 mt-0.5">
+                    <FileText className="w-6 h-6 text-[#ffb4ab] animate-pulse" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h4 className="text-sm sm:text-base font-black text-[#fecaca] uppercase">
+                        ⚠️ ALERTA DE DOCUMENTAÇÃO: {criticalDocsInAlert.length} Documento(s) Próximo(s) do Vencimento
+                      </h4>
+                      <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-[#ef4444] text-white">
+                        Exigência Legal PRF
+                      </span>
+                    </div>
+                    <p className="text-xs text-[#fed7aa] mt-1">
+                      {criticalDocsInAlert
+                        .map(
+                          (a) =>
+                            `${a.doc.title} (${
+                              a.daysRemaining < 0
+                                ? `Vencido há ${Math.abs(a.daysRemaining)} dias`
+                                : `vence em ${a.daysRemaining} dias`
+                            })`
+                        )
+                        .join(' • ')}
+                    </p>
+                    <p className="text-[11px] text-[#fca5a5]/80 mt-1">
+                      Art. 148-A do CTB: Dirigir com toxicológico ou CNH vencida acarreta multa gravíssima (5x) e retenção.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    playCockpitClick();
+                    setSubTab('documentos');
+                  }}
+                  className="h-9 px-3.5 rounded-xl bg-[#f59e0b] hover:bg-[#d97706] text-[#0f172a] text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-md shadow-amber-500/20 active:scale-95 shrink-0"
+                >
+                  <span>Regularizar Documentação</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Main Diagnostic Banner */}
           {urgentItems.length > 0 ? (
@@ -854,7 +1009,7 @@ export const MaintenanceDashboard: React.FC<MaintenanceDashboardProps> = ({
       )}
 
       {/* VIEW 2, 3, 4: LISTAGEM DE ITENS COM FILTRO DE CATEGORIAS */}
-      {subTab !== 'alertas' && (
+      {subTab !== 'alertas' && subTab !== 'documentos' && (
         <div>
           {/* Quick Filter Bar for 'todos' subtab */}
           {subTab === 'todos' && (
@@ -983,6 +1138,17 @@ export const MaintenanceDashboard: React.FC<MaintenanceDashboardProps> = ({
               })
             )}
           </div>
+        </div>
+      )}
+
+      {/* VIEW: ABA DE LEMBRETES DE DOCUMENTAÇÃO (CNH, EAR, EXAME TOXICOLÓGICO) */}
+      {subTab === 'documentos' && (
+        <div className="p-4 md:p-5">
+          <DriverDocumentSection
+            documents={docsToUse}
+            onUpdateDocuments={handleUpdateDocs}
+            currentUser={currentUser}
+          />
         </div>
       )}
 

@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Trip, MaintenanceItem, User, isAdminRole } from '../types/cockpit';
+import { Trip, MaintenanceItem, User, isAdminRole, isUserAdmin } from '../types/cockpit';
 import { formatCurrency, formatKm } from '../utils/formatters';
 import { playCockpitClick, playSuccessChime, playAlertBeep } from '../utils/audio';
 import {
@@ -204,7 +204,7 @@ export const BackupDataModal: React.FC<BackupDataModalProps> = ({
 
   if (!isOpen) return null;
 
-  const isAdmin = isAdminRole(currentUser?.role);
+  const isAdmin = isUserAdmin(currentUser);
 
   // Security check: Block display and execution of backup and cloud command functions for non-admin users
   if (!isAdmin) {

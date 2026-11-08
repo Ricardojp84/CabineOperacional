@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Trip, CargoType, VehicleAxles, User, isAdminRole } from '../types/cockpit';
+import { Trip, CargoType, VehicleAxles, User, isAdminRole, isUserAdmin } from '../types/cockpit';
 import { formatCurrency, formatKm } from '../utils/formatters';
 import { playCockpitClick, playSuccessChime } from '../utils/audio';
 import {
@@ -17,6 +17,7 @@ import {
   Scale,
   Gauge,
   MapPin,
+  Compass,
 } from 'lucide-react';
 import { calculateAdvancedRoute, TripType } from '../data/brazilCitiesDatabase';
 import { AutocompleteInput } from './AutocompleteInput';
@@ -38,7 +39,7 @@ export const EditTripModal: React.FC<EditTripModalProps> = ({
   onFinishTrip,
   currentUser,
 }) => {
-  const isAdmin = isAdminRole(currentUser?.role);
+  const isAdmin = isUserAdmin(currentUser);
 
   // Form states
   const [origin, setOrigin] = useState(trip.origin);
@@ -48,6 +49,11 @@ export const EditTripModal: React.FC<EditTripModalProps> = ({
   const [cargo, setCargo] = useState(trip.cargo);
   const [cargoType, setCargoType] = useState<CargoType>(trip.cargoType);
   const [cargoWeightTon, setCargoWeightTon] = useState(trip.cargoWeightTon);
+
+  // Vehicle / Truck Model Configuration
+  const [vehicleModel, setVehicleModel] = useState(trip.vehicleModel || 'Scania R540 6x4 Super');
+  const [vehiclePlate, setVehiclePlate] = useState(trip.vehiclePlate || 'BRA-2026');
+  const [axles, setAxles] = useState<VehicleAxles>(trip.axles || 6);
 
   // Administrative Financials (Locked for Drivers)
   const [grossFreight, setGrossFreight] = useState(trip.grossFreight);
@@ -67,6 +73,9 @@ export const EditTripModal: React.FC<EditTripModalProps> = ({
     setCargo(trip.cargo);
     setCargoType(trip.cargoType);
     setCargoWeightTon(trip.cargoWeightTon);
+    setVehicleModel(trip.vehicleModel || 'Scania R540 6x4 Super');
+    setVehiclePlate(trip.vehiclePlate || 'BRA-2026');
+    setAxles(trip.axles || 6);
     setGrossFreight(trip.grossFreight);
     setAdvancePayment(trip.advancePayment);
     setTotalDistanceKm(trip.totalDistanceKm);
@@ -75,6 +84,19 @@ export const EditTripModal: React.FC<EditTripModalProps> = ({
     setCompletedDistanceKm(trip.completedDistanceKm || 0);
     setTargetConsumptionKmL(trip.targetConsumptionKmL);
   }, [trip]);
+
+  // Automatic calculation & auto-fill of KM whenever Origin or Destination changes
+  useEffect(() => {
+    if (origin && destination && origin.trim().length >= 3 && destination.trim().length >= 3) {
+      const calc = calculateAdvancedRoute(origin, destination, axles, tripType);
+      if (calc.totalDistanceKm > 0) {
+        setTotalDistanceKm(calc.totalDistanceKm);
+        if (calc.highways) {
+          setRouteHighlights(calc.highways);
+        }
+      }
+    }
+  }, [origin, destination, axles, tripType]);
 
   if (!isOpen) return null;
 
@@ -105,6 +127,9 @@ export const EditTripModal: React.FC<EditTripModalProps> = ({
       cargo,
       cargoType: isAdmin ? cargoType : trip.cargoType,
       cargoWeightTon,
+      vehicleModel: vehicleModel.trim() || trip.vehicleModel,
+      vehiclePlate: vehiclePlate.trim().toUpperCase() || trip.vehiclePlate,
+      axles,
       grossFreight: isAdmin ? grossFreight : trip.grossFreight,
       advancePayment: isAdmin ? advancePayment : trip.advancePayment,
       balancePayment: isAdmin
@@ -216,6 +241,26 @@ export const EditTripModal: React.FC<EditTripModalProps> = ({
               }}
               placeholder="Ex: Porto de Santos - SP"
             />
+
+            {/* Live Auto-fill KM Badge */}
+            {origin && destination && totalDistanceKm > 0 && (
+              <div className="sm:col-span-2 p-2.5 rounded-xl bg-[#003824]/80 border border-[#10b981] flex flex-wrap items-center justify-between gap-2 text-xs text-[#a7f3d0] animate-in fade-in">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-[#34d399] shrink-0" />
+                  <span>
+                    KM Preenchido Automaticamente: <strong className="text-white font-mono font-black text-sm">{formatKm(totalDistanceKm)}</strong>
+                    {routeHighlights && (
+                      <span className="text-[#6ee7b7] text-[11px] ml-1.5 hidden md:inline">
+                        ({routeHighlights})
+                      </span>
+                    )}
+                  </span>
+                </div>
+                <span className="text-[10px] font-mono font-bold bg-[#081425] px-2 py-0.5 rounded text-[#38bdf8] border border-[#009365]/50">
+                  {tripType === 'ida_e_volta' ? 'Ida + Volta (2x)' : 'Somente Ida'}
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Trip Type Selector */}
@@ -271,6 +316,54 @@ export const EditTripModal: React.FC<EditTripModalProps> = ({
             </div>
           </div>
 
+          {/* Distância Total da Rota (Calculada com Precisão & Editável pelo Motorista) */}
+          <div className="p-3 bg-[#081425] rounded-xl border border-[#334155] space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-[#bec6e0] uppercase tracking-wide flex items-center gap-1.5">
+                <Compass className="w-4 h-4 text-[#f59e0b]" />
+                Distância Total Prevista da Rota (KM)
+              </span>
+              <span className="text-[10px] text-[#4edea3] font-mono font-bold">
+                Editável pelo Motorista
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1">
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={totalDistanceKm}
+                  onChange={(e) => setTotalDistanceKm(Math.max(1, parseFloat(e.target.value) || 0))}
+                  className="w-full h-11 bg-[#152031] border-1.5 border-[#334155] focus:border-[#f59e0b] rounded-xl pl-3 pr-12 text-[#ffb95f] font-mono font-extrabold text-sm outline-hidden"
+                  placeholder="Ex: 95"
+                  title="Distância total rodoviária estimada em KM. Você pode ajustar manualmente conforme seu velocímetro ou rota desejada."
+                />
+                <span className="absolute right-3 top-3 text-xs font-mono font-bold text-[#94a3b8]">
+                  KM
+                </span>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  playCockpitClick();
+                  if (origin && destination) {
+                    const calc = calculateAdvancedRoute(origin, destination, trip.axles, tripType);
+                    setTotalDistanceKm(calc.totalDistanceKm);
+                    setRouteHighlights(calc.highways);
+                  }
+                }}
+                className="h-11 px-3 bg-[#1e293b] hover:bg-[#243248] border border-[#f59e0b]/40 text-[#ffb95f] rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 active:scale-95"
+                title="Recalcular distância rodoviária exata entre as cidades"
+              >
+                <RotateCw className="w-3.5 h-3.5" />
+                <span>Recalcular</span>
+              </button>
+            </div>
+          </div>
+
           {/* Roteiro Rodoviário */}
           <div>
             <label className="block text-xs font-bold text-[#94a3b8] uppercase mb-1">
@@ -282,6 +375,97 @@ export const EditTripModal: React.FC<EditTripModalProps> = ({
               onChange={(e) => setRouteHighlights(e.target.value)}
               className="w-full h-12 bg-[#081425] border-1.5 border-[#334155] focus:border-[#f59e0b] rounded-xl px-3 text-[#d8e3fb] font-medium text-xs outline-hidden"
             />
+          </div>
+
+          {/* Dados do Veículo / Modelo do Caminhão */}
+          <div className="p-3 bg-[#081425] rounded-xl border border-[#334155] space-y-2.5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-[#ffb95f] uppercase tracking-wide flex items-center gap-1.5">
+                <Truck className="w-4 h-4 text-[#ffb95f]" />
+                Modelo do Caminhão & Placa
+              </span>
+              <span className="text-[10px] text-[#4edea3] font-mono font-bold">
+                Editável pelo Motorista
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
+              <div className="sm:col-span-5">
+                <label className="block text-[11px] font-bold text-[#bec6e0] uppercase mb-1">
+                  Modelo do Veículo / Caminhão
+                </label>
+                <input
+                  type="text"
+                  list="edit-truck-models"
+                  value={vehicleModel}
+                  onChange={(e) => setVehicleModel(e.target.value)}
+                  placeholder="Ex: Hyundai HR, VW Delivery 11.180, Scania R540..."
+                  className="w-full h-11 bg-[#152031] border border-[#334155] focus:border-[#ffb95f] rounded-xl px-3 text-[#d8e3fb] font-semibold text-xs outline-hidden"
+                />
+                <datalist id="edit-truck-models">
+                  <option value="Hyundai HR 2.5 Turbo" />
+                  <option value="Volkswagen Delivery Express" />
+                  <option value="Volkswagen Delivery 9.170" />
+                  <option value="Volkswagen Delivery 11.180" />
+                  <option value="Kia Bongo K2500" />
+                  <option value="Mercedes-Benz Accelo 815" />
+                  <option value="Mercedes-Benz Accelo 1016" />
+                  <option value="Iveco Daily 35-150 / 65-170" />
+                  <option value="Ford Cargo 816 / F-4000" />
+                  <option value="Volkswagen Constellation 14.190" />
+                  <option value="Mercedes-Benz Atego 1419" />
+                  <option value="Volkswagen Constellation 24.280" />
+                  <option value="Mercedes-Benz Atego 2426" />
+                  <option value="Volvo VM 330 8x2" />
+                  <option value="Scania R540 6x4 Super" />
+                  <option value="Volvo FH 540 6x4 Globetrotter" />
+                  <option value="Mercedes-Benz Actros 2651 6x4" />
+                  <option value="DAF XF 530 6x4 Super Space Cab" />
+                  <option value="Volkswagen Meteor 29.520 6x4" />
+                  <option value="Scania R450 6x2" />
+                  <option value="Volvo FH 460 6x2" />
+                  <option value="Iveco S-Way 540 6x4" />
+                  <option value="Bitrem 7 Eixos (Cavalo 6x4)" />
+                  <option value="Rodotrem 9 Eixos (Dolly + Semirreboques)" />
+                </datalist>
+              </div>
+
+              <div className="sm:col-span-3">
+                <label className="block text-[11px] font-bold text-[#bec6e0] uppercase mb-1">
+                  Placa do Veículo
+                </label>
+                <input
+                  type="text"
+                  value={vehiclePlate}
+                  onChange={(e) => setVehiclePlate(e.target.value.toUpperCase())}
+                  placeholder="BRA-2026"
+                  maxLength={8}
+                  className="w-full h-11 bg-[#152031] border border-[#334155] focus:border-[#ffb95f] rounded-xl px-3 text-[#ffb95f] font-mono font-black text-xs outline-hidden uppercase"
+                />
+              </div>
+
+              <div className="sm:col-span-4">
+                <label className="block text-[11px] font-bold text-[#bec6e0] uppercase mb-1">
+                  Eixos do Veículo
+                </label>
+                <select
+                  value={axles}
+                  onChange={(e) => {
+                    const newAxles = parseInt(e.target.value, 10) as VehicleAxles;
+                    setAxles(newAxles);
+                  }}
+                  className="w-full h-11 bg-[#152031] border border-[#334155] focus:border-[#ffb95f] rounded-xl px-2.5 text-[#d8e3fb] font-bold text-xs outline-hidden"
+                >
+                  <option value={2}>2 Eixos (VUC, Delivery, HR, Toco)</option>
+                  <option value={3}>3 Eixos (Truck 6x2)</option>
+                  <option value={4}>4 Eixos (Bitruck 8x2)</option>
+                  <option value={5}>5 Eixos (Cavalo + Carreta 2E)</option>
+                  <option value={6}>6 Eixos (Carreta LS 3E)</option>
+                  <option value={7}>7 Eixos (Bitrem)</option>
+                  <option value={9}>9 Eixos (Rodotrem)</option>
+                </select>
+              </div>
+            </div>
           </div>
 
           {/* 2. Carga & Peso do Frete (Editável pelo Motorista) */}
@@ -388,6 +572,25 @@ export const EditTripModal: React.FC<EditTripModalProps> = ({
                   className="w-full h-12 bg-[#152031] border-1.5 border-[#334155] focus:border-[#38bdf8] rounded-xl px-3 text-[#38bdf8] font-mono font-bold text-sm outline-hidden"
                 />
               </div>
+            </div>
+
+            {/* Quick action to auto-fill final odometer based on route distance */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-[#334155]/60 text-xs">
+              <span className="text-[11px] text-[#94a3b8]">
+                KM Final Projetado (Saída + Rota): <strong className="text-[#4edea3] font-mono font-bold">{formatKm(startOdometerKm + totalDistanceKm)}</strong>
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  playCockpitClick();
+                  handleCurrentOdometerChange(startOdometerKm + totalDistanceKm);
+                }}
+                className="text-[11px] font-bold text-[#ffb95f] hover:text-[#ffd699] hover:underline cursor-pointer flex items-center gap-1 transition-colors"
+                title="Preencher o KM Final somando a distância calculada da viagem"
+              >
+                <Gauge className="w-3.5 h-3.5" />
+                <span>Preencher KM Final Projetado</span>
+              </button>
             </div>
           </div>
 

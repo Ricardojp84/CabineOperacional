@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Trip, User, isAdminRole } from '../types/cockpit';
+import { Trip, User, isAdminRole, isUserAdmin } from '../types/cockpit';
 import { playCockpitClick, isSoundEnabled, setSoundEnabled } from '../utils/audio';
 import {
   Truck,
@@ -17,6 +17,7 @@ import {
   Edit,
   Satellite,
   Compass,
+  RotateCcw,
   HardDrive,
   Database,
   BarChart3,
@@ -38,6 +39,8 @@ interface HeaderCockpitProps {
   onOpenBackupModal: () => void;
   onOpenSupabaseModal: () => void;
   onOpenAnnualReport?: () => void;
+  onOpenVehicleSettings?: () => void;
+  onOpenResetData?: () => void;
 }
 
 export const HeaderCockpit: React.FC<HeaderCockpitProps> = ({
@@ -56,6 +59,8 @@ export const HeaderCockpit: React.FC<HeaderCockpitProps> = ({
   onOpenBackupModal,
   onOpenSupabaseModal,
   onOpenAnnualReport,
+  onOpenVehicleSettings,
+  onOpenResetData,
 }) => {
   const [timeStr, setTimeStr] = useState<string>('');
   const [soundOn, setSoundOn] = useState<boolean>(isSoundEnabled());
@@ -83,7 +88,7 @@ export const HeaderCockpit: React.FC<HeaderCockpitProps> = ({
     if (next) playCockpitClick();
   };
 
-  const isAdmin = isAdminRole(currentUser?.role);
+  const isAdmin = isUserAdmin(currentUser);
 
   const getRoleLabel = (role?: string) => {
     if (role === 'administrador') return 'Administrador';
@@ -97,13 +102,22 @@ export const HeaderCockpit: React.FC<HeaderCockpitProps> = ({
       <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2.5 sm:gap-3">
         {/* Brand & Live Truck Identity */}
         <div className="flex items-center gap-2.5 sm:gap-3">
-          <div className="flex items-center gap-2">
-            <div className="w-10 h-10 rounded-xl bg-[#0f172a] border border-[#f59e0b]/60 flex items-center justify-center text-[#f59e0b] shadow-md shadow-amber-500/10 shrink-0">
+          <button
+            type="button"
+            onClick={() => {
+              playCockpitClick();
+              if (onOpenVehicleSettings) onOpenVehicleSettings();
+              else onOpenEditTripModal();
+            }}
+            className="flex items-center gap-2 text-left cursor-pointer group"
+            title="Clique para alterar modelo do caminhão, placa ou eixos"
+          >
+            <div className="w-10 h-10 rounded-xl bg-[#0f172a] border border-[#f59e0b]/60 group-hover:border-[#f59e0b] flex items-center justify-center text-[#f59e0b] shadow-md shadow-amber-500/10 shrink-0 transition-colors">
               <Truck className="w-6 h-6" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="font-extrabold text-sm sm:text-base tracking-wider text-[#d8e3fb] uppercase">
+                <span className="font-extrabold text-sm sm:text-base tracking-wider text-[#d8e3fb] uppercase group-hover:text-[#ffb95f] transition-colors">
                   CABINE OPERACIONAL
                 </span>
                 <span className="hidden sm:inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#003824] text-[#4edea3] border border-[#10b981]/30">
@@ -112,12 +126,15 @@ export const HeaderCockpit: React.FC<HeaderCockpitProps> = ({
                 </span>
               </div>
               <div className="text-[11px] text-[#94a3b8] font-medium flex items-center gap-1.5">
-                <span className="font-bold text-[#ffb95f]">{trip.vehiclePlate}</span>
+                <span className="font-bold text-[#ffb95f] group-hover:underline">{trip.vehiclePlate}</span>
                 <span>•</span>
-                <span className="truncate max-w-[130px] sm:max-w-none">{trip.vehicleModel}</span>
+                <span className="truncate max-w-[130px] sm:max-w-none group-hover:text-[#d8e3fb] transition-colors">
+                  {trip.vehicleModel}
+                </span>
+                <Edit className="w-3 h-3 text-[#94a3b8] group-hover:text-[#ffb95f] shrink-0" />
               </div>
             </div>
-          </div>
+          </button>
 
           {/* Quick Route Switcher Button */}
           <button
@@ -253,6 +270,21 @@ export const HeaderCockpit: React.FC<HeaderCockpitProps> = ({
             >
               <UserIcon className="w-4 h-4" />
               <span>Login</span>
+            </button>
+          )}
+
+          {/* Zerar Dados / Iniciar Operação do Zero (Função Exclusiva de Administração) */}
+          {isAdmin && onOpenResetData && (
+            <button
+              onClick={() => {
+                playCockpitClick();
+                onOpenResetData();
+              }}
+              className="h-10 px-2.5 sm:px-3 bg-[#3f0f15] hover:bg-[#5f131c] border border-[#ef4444]/50 text-[#fca5a5] rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer active:scale-95"
+              title="Zerar todos os dados lançados para incluir sua rota e custos do zero (Função Administrativa)"
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-[#ef4444]" />
+              <span className="hidden lg:inline">Zerar Dados</span>
             </button>
           )}
 

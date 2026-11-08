@@ -1,13 +1,18 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Trip, User, VehicleAxles } from '../types/cockpit';
 import { playCockpitClick, playSuccessChime } from '../utils/audio';
-import { Truck, Check, X, ShieldCheck, Sparkles, Scale, Info, Filter, Car } from 'lucide-react';
+import { Truck, Check, X, ShieldCheck, Sparkles, Scale, Info, Filter, Car, Gauge, Fuel } from 'lucide-react';
 
 interface VehicleSettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
   currentTrip: Trip;
-  onSaveVehicle: (updates: { vehicleModel: string; vehiclePlate: string; axles: VehicleAxles }) => void;
+  onSaveVehicle: (updates: {
+    vehicleModel: string;
+    vehiclePlate: string;
+    axles: VehicleAxles;
+    targetConsumptionKmL: number;
+  }) => void;
   currentUser?: User | null;
 }
 
@@ -17,6 +22,7 @@ export interface VehiclePreset {
   axles: VehicleAxles;
   category: 'vuc_2e' | 'toco_truck' | 'pesados';
   description?: string;
+  defaultConsumptionKmL?: number;
 }
 
 const TRUCK_MODELS_PRESETS: VehiclePreset[] = [
@@ -27,6 +33,7 @@ const TRUCK_MODELS_PRESETS: VehiclePreset[] = [
     axles: 2,
     category: 'vuc_2e',
     description: 'Rodagem simples/dupla, CNH B, livre de rodízio e pedágio comercial reduzido',
+    defaultConsumptionKmL: 8.5,
   },
   {
     name: 'Volkswagen Delivery Express',
@@ -34,6 +41,7 @@ const TRUCK_MODELS_PRESETS: VehiclePreset[] = [
     axles: 2,
     category: 'vuc_2e',
     description: 'PBT 3.5t, CNH B, ideal para entregas urbanas e centros restritos',
+    defaultConsumptionKmL: 8.0,
   },
   {
     name: 'Volkswagen Delivery 9.170',
@@ -41,6 +49,7 @@ const TRUCK_MODELS_PRESETS: VehiclePreset[] = [
     axles: 2,
     category: 'vuc_2e',
     description: 'PBT 8.5t, motor Cummins, alta agilidade em coletas e entregas',
+    defaultConsumptionKmL: 6.0,
   },
   {
     name: 'Volkswagen Delivery 11.180',
@@ -48,6 +57,7 @@ const TRUCK_MODELS_PRESETS: VehiclePreset[] = [
     axles: 2,
     category: 'vuc_2e',
     description: 'Líder da categoria, PBT 10.7t, carga geral e distribuição fracionada',
+    defaultConsumptionKmL: 5.2,
   },
   {
     name: 'Kia Bongo K2500',
@@ -55,6 +65,7 @@ const TRUCK_MODELS_PRESETS: VehiclePreset[] = [
     axles: 2,
     category: 'vuc_2e',
     description: 'Tração 4x4 ou 4x2, CNH B, perfeito para baú e entregas expressas',
+    defaultConsumptionKmL: 8.5,
   },
   {
     name: 'Mercedes-Benz Accelo 815',
@@ -62,6 +73,7 @@ const TRUCK_MODELS_PRESETS: VehiclePreset[] = [
     axles: 2,
     category: 'vuc_2e',
     description: 'Compacto e robusto para rotas urbanas e intermunicipais',
+    defaultConsumptionKmL: 6.2,
   },
   {
     name: 'Mercedes-Benz Accelo 1016',
@@ -69,6 +81,7 @@ const TRUCK_MODELS_PRESETS: VehiclePreset[] = [
     axles: 2,
     category: 'vuc_2e',
     description: 'PBT 9.6t, motor MB BlueTec 5, alta produtividade',
+    defaultConsumptionKmL: 5.5,
   },
   {
     name: 'Iveco Daily 35-150 / 65-170',
@@ -76,6 +89,7 @@ const TRUCK_MODELS_PRESETS: VehiclePreset[] = [
     axles: 2,
     category: 'vuc_2e',
     description: 'Chassi resistente para baú, sider e transporte refrigerado',
+    defaultConsumptionKmL: 7.5,
   },
   {
     name: 'Ford Cargo 816 / F-4000',
@@ -83,6 +97,7 @@ const TRUCK_MODELS_PRESETS: VehiclePreset[] = [
     axles: 2,
     category: 'vuc_2e',
     description: 'Mecânica tradicional 2 eixos para distribuição regional',
+    defaultConsumptionKmL: 5.8,
   },
   {
     name: 'Volkswagen Constellation 14.190 / 17.190',
@@ -90,6 +105,7 @@ const TRUCK_MODELS_PRESETS: VehiclePreset[] = [
     axles: 2,
     category: 'vuc_2e',
     description: 'Caminhão Toco 2 eixos robusto (PBT até 16t)',
+    defaultConsumptionKmL: 4.2,
   },
   {
     name: 'Mercedes-Benz Atego 1419 / 1719',
@@ -97,6 +113,7 @@ const TRUCK_MODELS_PRESETS: VehiclePreset[] = [
     axles: 2,
     category: 'vuc_2e',
     description: 'PBT 14.3t a 17t, transporte de carga geral entre capitais e interior',
+    defaultConsumptionKmL: 4.2,
   },
 
   // 3 & 4 Eixos - Médios e Pesados Rígidos
@@ -106,6 +123,7 @@ const TRUCK_MODELS_PRESETS: VehiclePreset[] = [
     axles: 3,
     category: 'toco_truck',
     description: 'PBT 23t, chassi rígido consagrado no transporte rodoviário',
+    defaultConsumptionKmL: 3.2,
   },
   {
     name: 'Mercedes-Benz Atego 2426',
@@ -113,6 +131,7 @@ const TRUCK_MODELS_PRESETS: VehiclePreset[] = [
     axles: 3,
     category: 'toco_truck',
     description: 'PBT 24t, referência de confiabilidade e economia operacional',
+    defaultConsumptionKmL: 3.3,
   },
   {
     name: 'Volvo VM 330 8x2',
@@ -120,6 +139,7 @@ const TRUCK_MODELS_PRESETS: VehiclePreset[] = [
     axles: 4,
     category: 'toco_truck',
     description: 'PBT 29t, dois eixos direcionais, alta capacidade de carga líquida',
+    defaultConsumptionKmL: 2.8,
   },
   {
     name: 'Scania P360 8x2',
@@ -127,6 +147,7 @@ const TRUCK_MODELS_PRESETS: VehiclePreset[] = [
     axles: 4,
     category: 'toco_truck',
     description: 'PBT 29t, cabine leito para viagens rodoviárias de média e longa distância',
+    defaultConsumptionKmL: 2.8,
   },
 
   // Pesados & Articulados (5 a 9 Eixos)
@@ -136,6 +157,7 @@ const TRUCK_MODELS_PRESETS: VehiclePreset[] = [
     axles: 6,
     category: 'pesados',
     description: 'Motor Super 13L, 540 cv, alta eficiência para carretas e bitrens',
+    defaultConsumptionKmL: 2.3,
   },
   {
     name: 'Volvo FH 540 6x4 Globetrotter',
@@ -143,6 +165,7 @@ const TRUCK_MODELS_PRESETS: VehiclePreset[] = [
     axles: 6,
     category: 'pesados',
     description: 'Câmbio I-Shift, referência nacional para transporte pesado de grãos e cargas',
+    defaultConsumptionKmL: 2.3,
   },
   {
     name: 'Mercedes-Benz Actros 2651 6x4',
@@ -150,6 +173,7 @@ const TRUCK_MODELS_PRESETS: VehiclePreset[] = [
     axles: 6,
     category: 'pesados',
     description: 'OM 460 LA, tecnologia MirrorCam e alta segurança ativa',
+    defaultConsumptionKmL: 2.3,
   },
   {
     name: 'DAF XF 530 6x4 Super Space Cab',
@@ -157,6 +181,7 @@ const TRUCK_MODELS_PRESETS: VehiclePreset[] = [
     axles: 6,
     category: 'pesados',
     description: 'Cabine espaçosa, motor PACCAR MX-13 de 530 cv',
+    defaultConsumptionKmL: 2.3,
   },
   {
     name: 'Volkswagen Meteor 29.520 6x4',
@@ -164,6 +189,7 @@ const TRUCK_MODELS_PRESETS: VehiclePreset[] = [
     axles: 6,
     category: 'pesados',
     description: 'Motor MAN D26 de 520 cv, robustez para o agronegócio e rotas longas',
+    defaultConsumptionKmL: 2.3,
   },
   {
     name: 'Scania R450 6x2 Highline',
@@ -171,6 +197,7 @@ const TRUCK_MODELS_PRESETS: VehiclePreset[] = [
     axles: 6,
     category: 'pesados',
     description: 'Consumo econômico para semirreboque 3 eixos de carga geral',
+    defaultConsumptionKmL: 2.5,
   },
   {
     name: 'Volvo FH 460 6x2 I-Shift',
@@ -178,6 +205,7 @@ const TRUCK_MODELS_PRESETS: VehiclePreset[] = [
     axles: 6,
     category: 'pesados',
     description: 'Equilíbrio ideal entre potência e consumo nas rotas interestaduais',
+    defaultConsumptionKmL: 2.5,
   },
   {
     name: 'Iveco S-Way 540 6x4',
@@ -185,6 +213,7 @@ const TRUCK_MODELS_PRESETS: VehiclePreset[] = [
     axles: 6,
     category: 'pesados',
     description: 'Design aerodinâmico e trem de força Cursor 13',
+    defaultConsumptionKmL: 2.3,
   },
   {
     name: 'Cavalo + Carreta 2 Eixos',
@@ -192,6 +221,7 @@ const TRUCK_MODELS_PRESETS: VehiclePreset[] = [
     axles: 5,
     category: 'pesados',
     description: 'Cavalo 6x2 + Semirreboque 2 eixos espaçados (PBT 41.5t)',
+    defaultConsumptionKmL: 2.6,
   },
   {
     name: 'Bitrem 7 Eixos (Cavalo 6x4)',
@@ -199,6 +229,7 @@ const TRUCK_MODELS_PRESETS: VehiclePreset[] = [
     axles: 7,
     category: 'pesados',
     description: 'Dois semirreboques articulados por quinta-roda (PBT 57t)',
+    defaultConsumptionKmL: 1.8,
   },
   {
     name: 'Rodotrem 9 Eixos (Dolly + Semirreboques)',
@@ -206,6 +237,7 @@ const TRUCK_MODELS_PRESETS: VehiclePreset[] = [
     axles: 9,
     category: 'pesados',
     description: 'Conjunto longo com Dolly intermediário para grandes volumes (PBT 74t)',
+    defaultConsumptionKmL: 1.6,
   },
 ];
 
@@ -219,7 +251,26 @@ export const VehicleSettingsModal: React.FC<VehicleSettingsModalProps> = ({
   const [vehicleModel, setVehicleModel] = useState(currentTrip.vehicleModel || 'Scania R540 6x4 Super');
   const [vehiclePlate, setVehiclePlate] = useState(currentTrip.vehiclePlate || 'BRA-2026');
   const [axles, setAxles] = useState<VehicleAxles>(currentTrip.axles || 6);
+  const [targetConsumptionKmL, setTargetConsumptionKmL] = useState<number>(
+    currentTrip.targetConsumptionKmL && currentTrip.targetConsumptionKmL > 0
+      ? currentTrip.targetConsumptionKmL
+      : 2.3
+  );
   const [categoryFilter, setCategoryFilter] = useState<'todos' | 'vuc_2e' | 'toco_truck' | 'pesados'>('todos');
+
+  // Sincroniza com a viagem ao abrir o modal
+  useEffect(() => {
+    if (isOpen) {
+      setVehicleModel(currentTrip.vehicleModel || 'Scania R540 6x4 Super');
+      setVehiclePlate(currentTrip.vehiclePlate || 'BRA-2026');
+      setAxles(currentTrip.axles || 6);
+      setTargetConsumptionKmL(
+        currentTrip.targetConsumptionKmL && currentTrip.targetConsumptionKmL > 0
+          ? currentTrip.targetConsumptionKmL
+          : 2.3
+      );
+    }
+  }, [isOpen, currentTrip]);
 
   // Filter presets based on category
   const filteredPresets = useMemo(() => {
@@ -237,6 +288,7 @@ export const VehicleSettingsModal: React.FC<VehicleSettingsModalProps> = ({
       vehicleModel: vehicleModel.trim() || 'Scania R540 6x4 Super',
       vehiclePlate: vehiclePlate.trim().toUpperCase() || 'BRA-2026',
       axles,
+      targetConsumptionKmL: targetConsumptionKmL > 0 ? targetConsumptionKmL : 2.3,
     });
     onClose();
   };
@@ -368,6 +420,9 @@ export const VehicleSettingsModal: React.FC<VehicleSettingsModalProps> = ({
                       playCockpitClick();
                       setVehicleModel(preset.name);
                       setAxles(preset.axles);
+                      if (preset.defaultConsumptionKmL) {
+                        setTargetConsumptionKmL(preset.defaultConsumptionKmL);
+                      }
                     }}
                     className={`p-2.5 rounded-lg text-left text-xs transition-all cursor-pointer border ${
                       isSelected
@@ -389,7 +444,14 @@ export const VehicleSettingsModal: React.FC<VehicleSettingsModalProps> = ({
                         {preset.axles} Eixos
                       </span>
                     </div>
-                    <div className="text-[10px] text-[#94a3b8] mt-0.5">{preset.type}</div>
+                    <div className="text-[10px] text-[#94a3b8] mt-0.5 flex items-center justify-between">
+                      <span>{preset.type}</span>
+                      {preset.defaultConsumptionKmL && (
+                        <span className="text-[9px] font-mono text-[#38bdf8] bg-[#0c4a6e]/50 px-1 rounded">
+                          Meta: {preset.defaultConsumptionKmL} km/L
+                        </span>
+                      )}
+                    </div>
                     {preset.description && (
                       <div className="text-[9px] text-[#64748b] truncate mt-0.5">
                         {preset.description}
@@ -401,8 +463,8 @@ export const VehicleSettingsModal: React.FC<VehicleSettingsModalProps> = ({
             </div>
           </div>
 
-          {/* Placa & Eixos */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {/* Placa, Eixos & Meta de Consumo */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className="block text-xs font-bold text-[#94a3b8] uppercase mb-1">
                 Placa do Veículo
@@ -420,21 +482,62 @@ export const VehicleSettingsModal: React.FC<VehicleSettingsModalProps> = ({
 
             <div>
               <label className="block text-xs font-bold text-[#94a3b8] uppercase mb-1">
-                Configuração de Eixos (Tarifação & Pedágio)
+                Eixos (Tarifação)
               </label>
               <select
                 value={axles}
                 onChange={(e) => setAxles(Number(e.target.value) as VehicleAxles)}
-                className="w-full h-12 bg-[#081425] border border-[#334155] focus:border-[#f59e0b] rounded-xl px-3 text-[#d8e3fb] font-bold text-xs outline-hidden"
+                className="w-full h-12 bg-[#081425] border border-[#334155] focus:border-[#f59e0b] rounded-xl px-2.5 text-[#d8e3fb] font-bold text-xs outline-hidden"
               >
-                <option value={2}>2 Eixos (VUC, Delivery, Hyundai HR, Toco, Utilitário)</option>
-                <option value={3}>3 Eixos (Truck 6x2 - PBT 23t)</option>
-                <option value={4}>4 Eixos (Bitruck 8x2 / 8x4 - PBT 29t)</option>
-                <option value={5}>5 Eixos (Cavalo + Carreta 2 Eixos - PBT 41.5t)</option>
-                <option value={6}>6 Eixos (Cavalo 6x2/6x4 + Carreta 3 Eixos LS - PBT 48.5t)</option>
-                <option value={7}>7 Eixos (Bitrem 7 Eixos - PBT 57t)</option>
-                <option value={9}>9 Eixos (Rodotrem / Tritrem 9 Eixos - PBT 74t)</option>
+                <option value={2}>2 Eixos (VUC, Delivery, HR, Toco)</option>
+                <option value={3}>3 Eixos (Truck 6x2 - 23t)</option>
+                <option value={4}>4 Eixos (Bitruck 8x2 - 29t)</option>
+                <option value={5}>5 Eixos (Carreta 2E - 41.5t)</option>
+                <option value={6}>6 Eixos (Carreta LS 3E - 48.5t)</option>
+                <option value={7}>7 Eixos (Bitrem 7E - 57t)</option>
+                <option value={9}>9 Eixos (Rodotrem 9E - 74t)</option>
               </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-[#ffb95f] uppercase mb-1 flex items-center justify-between">
+                <span className="flex items-center gap-1">
+                  <Gauge className="w-3.5 h-3.5 text-[#ffb95f]" />
+                  Meta de Consumo
+                </span>
+                <span className="text-[10px] text-[#94a3b8] font-mono">
+                  (km/L)
+                </span>
+              </label>
+              <div className="relative">
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0.5"
+                  max="30.0"
+                  value={targetConsumptionKmL}
+                  onChange={(e) => setTargetConsumptionKmL(parseFloat(e.target.value) || 0)}
+                  placeholder="Ex: 2.3 ou 8.5"
+                  className="w-full h-12 bg-[#081425] border-1.5 border-[#f59e0b]/50 focus:border-[#f59e0b] rounded-xl px-3.5 pr-14 text-[#ffb95f] font-mono font-black text-sm outline-hidden"
+                  required
+                />
+                <span className="absolute right-3.5 top-3.5 text-xs font-mono font-bold text-[#94a3b8] pointer-events-none">
+                  km/L
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Banner de Monitoramento de Consumo (-20% Alerta) */}
+          <div className="p-3.5 rounded-xl bg-[#081425] border border-[#f59e0b]/40 flex items-start gap-2.5 text-xs text-[#d8e3fb]">
+            <Fuel className="w-5 h-5 text-[#f59e0b] shrink-0 mt-0.5" />
+            <div className="space-y-1 text-[11px] leading-relaxed">
+              <span className="font-extrabold text-[#ffb95f] block">
+                Monitoramento Inteligente de Consumo no Cockpit:
+              </span>
+              <p className="text-[#94a3b8]">
+                Com a meta definida em <strong className="text-white font-mono">{targetConsumptionKmL.toFixed(2)} km/L</strong>, o Cockpit emitirá um alerta visual imediato sempre que a média real de abastecimentos cair para <strong className="text-[#ef4444] font-mono">{(targetConsumptionKmL * 0.8).toFixed(2)} km/L ou menos</strong> (20% abaixo da meta estipulada para o veículo).
+              </p>
             </div>
           </div>
 

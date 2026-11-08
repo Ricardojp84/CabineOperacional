@@ -11,6 +11,7 @@ import { playCockpitClick, playSuccessChime, playAlertBeep } from '../utils/audi
 import {
   authenticateSupabaseAdmin,
   getSupabaseAdminSqlSnippet,
+  registerAdministratorAccount,
 } from '../services/supabaseAuthService';
 import {
   isSupabaseConfigured,
@@ -84,13 +85,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [pendingUser, setPendingUser] = useState<User | null>(null);
   const [verificationSuccess, setVerificationSuccess] = useState(false);
 
-  if (!isOpen) return null;
-
-  const usersList = getUsersFromStorage();
-
+  // Supabase Admin authentication states
   const [isAuthenticatingAdmin, setIsAuthenticatingAdmin] = useState(false);
   const [showAdminSqlHelper, setShowAdminSqlHelper] = useState(false);
   const [copiedSql, setCopiedSql] = useState(false);
+
+  // Administrator registration states
+  const [registerRoleType, setRegisterRoleType] = useState<'motorista' | 'admin'>('admin');
+  const [isCreatingAdmin, setIsCreatingAdmin] = useState(false);
+  const [regCompany, setRegCompany] = useState('Pinheiro Transportes');
+  const [regPhone, setRegPhone] = useState('');
+
+  if (!isOpen) return null;
+
+  const usersList = getUsersFromStorage();
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -134,6 +142,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     );
 
     if (found) {
+      // Check if driver was blocked by admin
+      if (found.status === 'bloqueado') {
+        playAlertBeep();
+        setErrorMessage('Acesso bloqueado: Este cadastro de motorista foi suspenso pelo Administrador da frota.');
+        return;
+      }
+
       // Check if email is verified
       if (found.isEmailVerified === false) {
         playAlertBeep();
@@ -162,7 +177,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     if (onClose) onClose();
   };
 
-  const handleRegister = (e: React.FormEvent) => {
+  const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
 
@@ -177,6 +192,40 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
 
     const trimmedEmail = regEmail.trim().toLowerCase();
+
+    // 1. CADASTRO DE CONTA DE ADMINISTRADOR
+    if (registerRoleType === 'admin' || regRole === 'administrador') {
+      setIsCreatingAdmin(true);
+      try {
+        const result = await registerAdministratorAccount({
+          name: regName.trim(),
+          email: trimmedEmail,
+          password: regPassword.trim(),
+          role: 'administrador',
+          phone: regPhone.trim(),
+          company: regCompany.trim() || 'Gestão Matriz',
+        });
+
+        if (result.success && result.user) {
+          playSuccessChime();
+          onLoginSuccess(result.user);
+          if (onClose) onClose();
+          return;
+        } else {
+          playAlertBeep();
+          setErrorMessage(result.error || 'Erro ao registrar conta de Administrador.');
+          return;
+        }
+      } catch (err: any) {
+        playAlertBeep();
+        setErrorMessage(`Falha no cadastro de administrador: ${err.message || 'Erro inesperado'}`);
+        return;
+      } finally {
+        setIsCreatingAdmin(false);
+      }
+    }
+
+    // 2. CADASTRO DE CONTA DE MOTORISTA (LOCAL)
     if (usersList.some((u) => u.email.toLowerCase() === trimmedEmail)) {
       playAlertBeep();
       setErrorMessage('Já existe um usuário cadastrado com este e-mail/login.');
@@ -583,6 +632,27 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   )}
                 </button>
               </div>
+
+              {loginRoleFilter === 'admin' && (
+                <div className="pt-1 text-center">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      playCockpitClick();
+                      setMode('register');
+                      setRegisterRoleType('admin');
+                      setRegRole('administrador');
+                      if (!regName) setRegName('Ricardo Pinheiro');
+                      if (!regEmail) setRegEmail(emailInput || 'ricardo.jr.pinheiro@gmail.com');
+                      setErrorMessage('');
+                    }}
+                    className="text-xs text-[#ffb95f] hover:text-[#ffd699] font-bold underline cursor-pointer flex items-center justify-center gap-1.5 mx-auto"
+                  >
+                    <ShieldCheck className="w-4 h-4 text-[#f59e0b]" />
+                    <span>Não tem conta de Administrador? Criar Conta Oficial agora</span>
+                  </button>
+                </div>
+              )}
             </form>
 
             {/* Quick Demo Accounts Helper (Filtered by selected role) */}
@@ -732,123 +802,345 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
         {/* View 3: Register Form */}
         {mode === 'register' && (
-          <form onSubmit={handleRegister} className="mt-4 space-y-3.5">
-            <div>
-              <label className="block text-xs font-bold text-[#94a3b8] uppercase mb-1">
-                Nome Completo do Motorista / Gestor
-              </label>
-              <input
-                type="text"
-                required
-                placeholder="Ex: Carlos Eduardo de Oliveira"
-                value={regName}
-                onChange={(e) => setRegName(e.target.value)}
-                className="w-full h-12 bg-[#081425] border-1.5 border-[#334155] focus:border-[#f59e0b] rounded-xl px-3 text-[#d8e3fb] font-semibold text-xs outline-hidden"
-              />
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-bold text-[#94a3b8] uppercase mb-1">
-                  E-mail para Confirmação
-                </label>
-                <input
-                  type="email"
-                  required
-                  placeholder="ex: carlos@estrada.com.br"
-                  value={regEmail}
-                  onChange={(e) => setRegEmail(e.target.value)}
-                  className="w-full h-12 bg-[#081425] border-1.5 border-[#334155] focus:border-[#f59e0b] rounded-xl px-3 text-[#d8e3fb] font-semibold text-xs outline-hidden"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-[#94a3b8] uppercase mb-1">
-                  Criar Senha de Acesso
-                </label>
-                <input
-                  type="password"
-                  required
-                  placeholder="Mínimo 6 caracteres"
-                  value={regPassword}
-                  onChange={(e) => setRegPassword(e.target.value)}
-                  className="w-full h-12 bg-[#081425] border-1.5 border-[#334155] focus:border-[#f59e0b] rounded-xl px-3 text-[#d8e3fb] font-mono text-xs outline-hidden"
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-bold text-[#94a3b8] uppercase mb-1">
-                  Perfil de Operação
-                </label>
-                <select
-                  value={regRole}
-                  onChange={(e) => setRegRole(e.target.value as UserRole)}
-                  className="w-full h-12 bg-[#081425] border-1.5 border-[#334155] focus:border-[#f59e0b] rounded-xl px-2.5 text-[#d8e3fb] font-bold text-xs outline-hidden"
-                >
-                  <option value="motorista">Motorista (Operacional de rota, cargas e tacógrafo)</option>
-                  <option value="motorista_autonomo">Motorista Autônomo (TAC)</option>
-                  <option value="motorista_agregado">Motorista Agregado</option>
-                </select>
-                <p className="text-[10px] text-[#94a3b8] mt-1">
-                  * Contas de Administrador são restritas e cadastradas exclusivamente via banco Supabase.
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-[#94a3b8] uppercase mb-1">
-                  RNTRC / ANTT
-                </label>
-                <input
-                  type="text"
-                  placeholder="Ex: 51.982.340"
-                  value={regRntrc}
-                  onChange={(e) => setRegRntrc(e.target.value)}
-                  className="w-full h-12 bg-[#081425] border-1.5 border-[#334155] focus:border-[#f59e0b] rounded-xl px-3 text-[#d8e3fb] font-mono text-xs outline-hidden"
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-bold text-[#94a3b8] uppercase mb-1">
-                  Modelo do Cavalo Mecânico
-                </label>
-                <input
-                  type="text"
-                  placeholder="Ex: Scania R450 6x2"
-                  value={regTruck}
-                  onChange={(e) => setRegTruck(e.target.value)}
-                  className="w-full h-12 bg-[#081425] border-1.5 border-[#334155] focus:border-[#f59e0b] rounded-xl px-3 text-[#d8e3fb] text-xs outline-hidden"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-[#94a3b8] uppercase mb-1">
-                  Placa do Veículo
-                </label>
-                <input
-                  type="text"
-                  placeholder="Ex: BRA-2026"
-                  value={regPlate}
-                  onChange={(e) => setRegPlate(e.target.value)}
-                  className="w-full h-12 bg-[#081425] border-1.5 border-[#334155] focus:border-[#f59e0b] rounded-xl px-3 text-[#d8e3fb] font-mono text-xs outline-hidden uppercase"
-                />
-              </div>
-            </div>
-
-            <div className="pt-2">
+          <div className="mt-4 space-y-3.5">
+            {/* Role Type Selector for Registration */}
+            <div className="grid grid-cols-2 gap-2 p-1 bg-[#081425] rounded-xl border border-[#334155]">
               <button
-                type="submit"
-                className="w-full h-14 min-h-[56px] rounded-xl bg-[#10b981] hover:bg-[#059669] text-[#022c22] font-extrabold text-base flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/25 active:scale-[0.99] transition-all cursor-pointer"
+                type="button"
+                onClick={() => {
+                  playCockpitClick();
+                  setRegisterRoleType('motorista');
+                  setRegRole('motorista_autonomo');
+                  setErrorMessage('');
+                }}
+                className={`h-11 rounded-lg text-xs font-extrabold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                  registerRoleType === 'motorista'
+                    ? 'bg-[#10b981] text-[#022c22] shadow-sm'
+                    : 'text-[#94a3b8] hover:text-[#d8e3fb]'
+                }`}
               >
-                <Mail className="w-5 h-5 stroke-[2.5]" />
-                <span>Criar Conta & Enviar Link de Confirmação</span>
+                <Truck className="w-4 h-4" />
+                <span>Conta de Motorista</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  playCockpitClick();
+                  setRegisterRoleType('admin');
+                  setRegRole('administrador');
+                  setErrorMessage('');
+                  if (!regName) setRegName('Ricardo Pinheiro');
+                  if (!regEmail) setRegEmail('ricardo.jr.pinheiro@gmail.com');
+                }}
+                className={`h-11 rounded-lg text-xs font-extrabold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                  registerRoleType === 'admin'
+                    ? 'bg-[#ffb95f] text-[#081425] shadow-sm'
+                    : 'text-[#94a3b8] hover:text-[#d8e3fb]'
+                }`}
+              >
+                <ShieldCheck className="w-4 h-4" />
+                <span>Conta de Administrador</span>
               </button>
             </div>
-          </form>
+
+            {/* FORM 3A: ADMINISTRATOR REGISTRATION FORM */}
+            {registerRoleType === 'admin' ? (
+              <form onSubmit={handleRegister} className="space-y-3.5">
+                {/* Admin Role Info Card */}
+                <div className="p-3.5 rounded-xl bg-gradient-to-r from-[#241705] via-[#1f1505] to-[#152031] border border-[#f59e0b]/50 text-xs text-[#fed7aa] space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-extrabold text-[#ffb95f] flex items-center gap-1.5 text-xs">
+                      <ShieldCheck className="w-4 h-4 text-[#f59e0b]" />
+                      Cadastro de Administrador / Gestor de Frota
+                    </span>
+                    <span className="text-[10px] bg-[#f59e0b]/20 text-[#ffb95f] font-mono px-2 py-0.5 rounded font-bold">
+                      Acesso Total
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[#bec6e0] leading-relaxed">
+                    Esta conta terá acesso irrestrito ao painel de bordo, conexão na nuvem Supabase, banco relacional, backup JSON e relatórios de lucratividade.
+                  </p>
+                  <div className="pt-1.5 border-t border-[#334155]/60 flex items-center justify-between text-[11px]">
+                    <span className="text-[#94a3b8]">Status da Nuvem Supabase:</span>
+                    {isSupabaseConfigured ? (
+                      <span className="text-[#34d399] font-bold flex items-center gap-1">
+                        <Check className="w-3.5 h-3.5" /> Conectado ({getSupabaseProjectId(getStoredCredentials().url) || 'Ativo'})
+                      </span>
+                    ) : (
+                      <span className="text-[#ffb95f] font-semibold flex items-center gap-1">
+                        <Info className="w-3.5 h-3.5 text-[#f59e0b]" /> Criando Administrador Inicial
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-[#94a3b8] uppercase mb-1">
+                    Nome Completo do Administrador
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ex: Ricardo Pinheiro"
+                    value={regName}
+                    onChange={(e) => setRegName(e.target.value)}
+                    className="w-full h-12 bg-[#081425] border-1.5 border-[#334155] focus:border-[#f59e0b] rounded-xl px-3 text-[#d8e3fb] font-semibold text-xs outline-hidden"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-[#94a3b8] uppercase mb-1">
+                      E-mail do Administrador
+                    </label>
+                    <input
+                      type="email"
+                      required
+                      placeholder="ex: ricardo.jr.pinheiro@gmail.com"
+                      value={regEmail}
+                      onChange={(e) => setRegEmail(e.target.value)}
+                      className="w-full h-12 bg-[#081425] border-1.5 border-[#334155] focus:border-[#f59e0b] rounded-xl px-3 text-[#d8e3fb] font-semibold text-xs outline-hidden"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-[#94a3b8] uppercase mb-1">
+                      Criar Senha de Administrador
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showPassword ? 'text' : 'password'}
+                        required
+                        placeholder="Mínimo 6 caracteres"
+                        value={regPassword}
+                        onChange={(e) => setRegPassword(e.target.value)}
+                        className="w-full h-12 bg-[#081425] border-1.5 border-[#334155] focus:border-[#f59e0b] rounded-xl px-3 pr-10 text-[#d8e3fb] font-mono text-xs outline-hidden"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="absolute right-3 top-3.5 text-[#94a3b8] hover:text-[#d8e3fb] cursor-pointer"
+                      >
+                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-[#94a3b8] uppercase mb-1">
+                      Empresa / Frota / Transportadora
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Ex: Pinheiro Transportes / Matriz"
+                      value={regCompany}
+                      onChange={(e) => setRegCompany(e.target.value)}
+                      className="w-full h-12 bg-[#081425] border-1.5 border-[#334155] focus:border-[#f59e0b] rounded-xl px-3 text-[#d8e3fb] text-xs outline-hidden"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-[#94a3b8] uppercase mb-1">
+                      Telefone / WhatsApp (Opcional)
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Ex: (45) 99711-8840"
+                      value={regPhone}
+                      onChange={(e) => setRegPhone(e.target.value)}
+                      className="w-full h-12 bg-[#081425] border-1.5 border-[#334155] focus:border-[#f59e0b] rounded-xl px-3 text-[#d8e3fb] font-mono text-xs outline-hidden"
+                    />
+                  </div>
+                </div>
+
+                <div className="pt-2">
+                  <button
+                    type="submit"
+                    disabled={isCreatingAdmin}
+                    className="w-full h-14 min-h-[56px] rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-[#081425] font-black text-base flex items-center justify-center gap-2 shadow-lg shadow-amber-500/25 active:scale-[0.99] transition-all cursor-pointer"
+                  >
+                    {isCreatingAdmin ? (
+                      <>
+                        <RefreshCw className="w-5 h-5 animate-spin" />
+                        <span>Criando Administrador...</span>
+                      </>
+                    ) : (
+                      <>
+                        <ShieldCheck className="w-5 h-5 stroke-[2.5]" />
+                        <span>Criar & Ativar Minha Conta de Administrador</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {/* SQL Helper Accordion */}
+                <div className="rounded-xl border border-[#334155] bg-[#0c1322] overflow-hidden mt-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      playCockpitClick();
+                      setShowAdminSqlHelper(!showAdminSqlHelper);
+                    }}
+                    className="w-full p-2.5 px-3 flex items-center justify-between text-left text-xs font-bold text-[#ffb95f] hover:text-[#ffd699] transition-colors cursor-pointer"
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <Code2 className="w-3.5 h-3.5 text-[#f59e0b]" />
+                      Ver comando SQL para inserir diretamente no Supabase (Opcional)
+                    </span>
+                    <span className="text-[11px] text-[#94a3b8]">{showAdminSqlHelper ? 'Ocultar' : 'Ver SQL'}</span>
+                  </button>
+
+                  {showAdminSqlHelper && (
+                    <div className="p-3 pt-0 border-t border-[#334155]/60 space-y-2">
+                      <p className="text-[11px] text-[#94a3b8]">
+                        Caso prefira executar via painel Supabase, rode este comando no <strong>SQL Editor</strong> do seu banco:
+                      </p>
+                      <div className="relative">
+                        <pre className="p-2.5 rounded-lg bg-[#081425] border border-[#334155] font-mono text-[10px] text-[#38bdf8] overflow-x-auto whitespace-pre">
+                          {getSupabaseAdminSqlSnippet(regEmail || 'ricardo.jr.pinheiro@gmail.com', regName || 'Ricardo Pinheiro')}
+                        </pre>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(
+                              getSupabaseAdminSqlSnippet(regEmail || 'ricardo.jr.pinheiro@gmail.com', regName || 'Ricardo Pinheiro')
+                            );
+                            setCopiedSql(true);
+                            playCockpitClick();
+                            setTimeout(() => setCopiedSql(false), 3000);
+                          }}
+                          className="absolute top-2 right-2 px-2 py-1 rounded bg-[#1e293b] hover:bg-[#243248] border border-[#334155] text-[10px] font-bold text-white flex items-center gap-1 cursor-pointer"
+                        >
+                          {copiedSql ? <Check className="w-3 h-3 text-[#10b981]" /> : <Copy className="w-3 h-3" />}
+                          <span>{copiedSql ? 'Copiado!' : 'Copiar'}</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </form>
+            ) : (
+              /* FORM 3B: DRIVER REGISTRATION FORM */
+              <form onSubmit={handleRegister} className="space-y-3.5">
+                <div>
+                  <label className="block text-xs font-bold text-[#94a3b8] uppercase mb-1">
+                    Nome Completo do Motorista
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ex: Carlos Eduardo de Oliveira"
+                    value={regName}
+                    onChange={(e) => setRegName(e.target.value)}
+                    className="w-full h-12 bg-[#081425] border-1.5 border-[#334155] focus:border-[#f59e0b] rounded-xl px-3 text-[#d8e3fb] font-semibold text-xs outline-hidden"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-[#94a3b8] uppercase mb-1">
+                      E-mail para Confirmação
+                    </label>
+                    <input
+                      type="email"
+                      required
+                      placeholder="ex: carlos@estrada.com.br"
+                      value={regEmail}
+                      onChange={(e) => setRegEmail(e.target.value)}
+                      className="w-full h-12 bg-[#081425] border-1.5 border-[#334155] focus:border-[#f59e0b] rounded-xl px-3 text-[#d8e3fb] font-semibold text-xs outline-hidden"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-[#94a3b8] uppercase mb-1">
+                      Criar Senha de Acesso
+                    </label>
+                    <input
+                      type="password"
+                      required
+                      placeholder="Mínimo 6 caracteres"
+                      value={regPassword}
+                      onChange={(e) => setRegPassword(e.target.value)}
+                      className="w-full h-12 bg-[#081425] border-1.5 border-[#334155] focus:border-[#f59e0b] rounded-xl px-3 text-[#d8e3fb] font-mono text-xs outline-hidden"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-[#94a3b8] uppercase mb-1">
+                      Perfil de Operação
+                    </label>
+                    <select
+                      value={regRole}
+                      onChange={(e) => setRegRole(e.target.value as UserRole)}
+                      className="w-full h-12 bg-[#081425] border-1.5 border-[#334155] focus:border-[#f59e0b] rounded-xl px-2.5 text-[#d8e3fb] font-bold text-xs outline-hidden"
+                    >
+                      <option value="motorista">Motorista (Operacional de rota, cargas e tacógrafo)</option>
+                      <option value="motorista_autonomo">Motorista Autônomo (TAC)</option>
+                      <option value="motorista_agregado">Motorista Agregado</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-[#94a3b8] uppercase mb-1">
+                      RNTRC / ANTT
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Ex: 51.982.340"
+                      value={regRntrc}
+                      onChange={(e) => setRegRntrc(e.target.value)}
+                      className="w-full h-12 bg-[#081425] border-1.5 border-[#334155] focus:border-[#f59e0b] rounded-xl px-3 text-[#d8e3fb] font-mono text-xs outline-hidden"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-[#94a3b8] uppercase mb-1">
+                      Modelo do Cavalo Mecânico
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Ex: Scania R450 6x2"
+                      value={regTruck}
+                      onChange={(e) => setRegTruck(e.target.value)}
+                      className="w-full h-12 bg-[#081425] border-1.5 border-[#334155] focus:border-[#f59e0b] rounded-xl px-3 text-[#d8e3fb] text-xs outline-hidden"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-[#94a3b8] uppercase mb-1">
+                      Placa do Veículo
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Ex: BRA-2026"
+                      value={regPlate}
+                      onChange={(e) => setRegPlate(e.target.value)}
+                      className="w-full h-12 bg-[#081425] border-1.5 border-[#334155] focus:border-[#f59e0b] rounded-xl px-3 text-[#d8e3fb] font-mono text-xs outline-hidden uppercase"
+                    />
+                  </div>
+                </div>
+
+                <div className="pt-2">
+                  <button
+                    type="submit"
+                    className="w-full h-14 min-h-[56px] rounded-xl bg-[#10b981] hover:bg-[#059669] text-[#022c22] font-extrabold text-base flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/25 active:scale-[0.99] transition-all cursor-pointer"
+                  >
+                    <Mail className="w-5 h-5 stroke-[2.5]" />
+                    <span>Criar Conta & Enviar Link de Confirmação</span>
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
         )}
+
       </div>
     </div>
   );

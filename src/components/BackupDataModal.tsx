@@ -36,6 +36,7 @@ import {
   Check,
   ShieldAlert,
 } from 'lucide-react';
+import { withAdminPermission } from '../middlewares/permissionMiddleware';
 
 interface BackupDataModalProps {
   isOpen: boolean;
@@ -167,7 +168,7 @@ CREATE POLICY "Acesso publico total a despesas" ON public.expenses FOR ALL USING
 CREATE POLICY "Acesso publico total a checkpoints" ON public.checkpoints FOR ALL USING (true);
 CREATE POLICY "Acesso publico total a manutencao" ON public.maintenance_items FOR ALL USING (true);`;
 
-export const BackupDataModal: React.FC<BackupDataModalProps> = ({
+const BackupDataModalContent: React.FC<BackupDataModalProps> = ({
   isOpen,
   onClose,
   activeTrip,
@@ -979,3 +980,7 @@ export const BackupDataModal: React.FC<BackupDataModalProps> = ({
     </div>
   );
 };
+
+export const BackupDataModal = withAdminPermission(BackupDataModalContent, {
+  resourceTitle: 'Backup Local JSON & Exportação',
+});

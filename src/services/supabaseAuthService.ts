@@ -1,6 +1,6 @@
-import { User, UserRole, isUserAdmin } from '../types/cockpit';
+import { User, UserRole, isUserAdmin, isAdminRole } from '../types/cockpit';
 import { getSupabaseClient, isSupabaseConfigured, getStoredCredentials, getSupabaseProjectId } from '../lib/supabase';
-import { saveCurrentUserSession } from '../data/mockUsers';
+import { saveCurrentUserSession, getUsersFromStorage, saveUsersToStorage } from '../data/mockUsers';
 
 export interface SupabaseAdminAuthResult {
   success: boolean;
@@ -42,8 +42,133 @@ WHERE role IN ('administrador', 'admin', 'gestor_frota');`;
 };
 
 /**
- * Authenticates an administrator exclusively through the connected Supabase instance.
- * Rejects any local or pre-configured admin bypass.
+ * Parameters for registering an administrator
+ */
+export interface RegisterAdminParams {
+  name: string;
+  email: string;
+  password?: string;
+  role?: UserRole;
+  phone?: string;
+  company?: string;
+}
+
+/**
+ * Creates and registers an Administrator account, recording it directly into Supabase (if connected)
+ * and in the verified local administrator storage.
+ */
+export const registerAdministratorAccount = async (
+  params: RegisterAdminParams
+): Promise<{ success: boolean; user?: User; error?: string; supabaseSynced?: boolean }> => {
+  const cleanEmail = params.email.trim().toLowerCase();
+  const cleanName = params.name.trim();
+  const cleanPassword = params.password?.trim() || '';
+
+  if (!cleanEmail || !cleanName) {
+    return { success: false, error: 'Nome completo e e-mail são obrigatórios.' };
+  }
+
+  if (cleanPassword && cleanPassword.length < 6) {
+    return { success: false, error: 'A senha de acesso deve conter pelo menos 6 caracteres.' };
+  }
+
+  let supabaseSynced = false;
+  let authUserId: string | undefined = undefined;
+
+  const client = getSupabaseClient();
+  const creds = getStoredCredentials();
+
+  // 1. If Supabase is configured, create in Supabase Auth & public.profiles
+  if (client && creds.url && creds.key) {
+    try {
+      // 1A. Attempt Supabase Auth sign-up if password provided
+      if (cleanPassword) {
+        try {
+          const { data: authData, error: authErr } = await client.auth.signUp({
+            email: cleanEmail,
+            password: cleanPassword,
+            options: {
+              data: {
+                name: cleanName,
+                role: 'administrador',
+              },
+            },
+          });
+          if (!authErr && authData?.user) {
+            authUserId = authData.user.id;
+          }
+        } catch (authException) {
+          console.warn('Supabase auth.signUp aviso (prosseguindo para tabela profiles):', authException);
+        }
+      }
+
+      // 1B. Upsert into public.profiles
+      const { error: profileErr } = await client.from('profiles').upsert(
+        {
+          name: cleanName,
+          email: cleanEmail,
+          role: 'administrador',
+          truck_model: 'Frota Corporativa',
+          truck_plate: 'ADM-2026',
+          rntrc: params.company || 'Gestão Matriz',
+          phone: params.phone || '',
+          cnh_category: 'E',
+          is_email_verified: true,
+          auth_user_id: authUserId,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'email' }
+      );
+
+      if (!profileErr) {
+        supabaseSynced = true;
+      } else {
+        console.warn('Aviso ao registrar na tabela profiles:', profileErr);
+      }
+    } catch (err) {
+      console.warn('Erro ao comunicar com Supabase no cadastro:', err);
+    }
+  }
+
+  // 2. Build official Administrator user object with verified admin permission
+  const adminUser: User = {
+    id: authUserId || `admin-${Date.now()}`,
+    name: cleanName,
+    email: cleanEmail,
+    password: cleanPassword || undefined,
+    role: 'administrador',
+    truckModel: 'Frota Corporativa',
+    truckPlate: 'ADM-2026',
+    rntrc: params.company || 'Gestão Matriz',
+    phone: params.phone || '',
+    cnhCategory: 'E',
+    isEmailVerified: true,
+    isSupabaseVerifiedAdmin: true,
+    authProvider: supabaseSynced ? 'supabase' : 'local',
+    createdAt: new Date().toISOString(),
+  };
+
+  // 3. Persist into user list & session
+  const users = getUsersFromStorage();
+  const existingIdx = users.findIndex((u) => u.email.toLowerCase() === cleanEmail);
+  if (existingIdx >= 0) {
+    users[existingIdx] = adminUser;
+  } else {
+    users.unshift(adminUser);
+  }
+  saveUsersToStorage(users);
+  saveCurrentUserSession(adminUser);
+
+  return {
+    success: true,
+    user: adminUser,
+    supabaseSynced,
+  };
+};
+
+/**
+ * Authenticates an administrator exclusively through the connected Supabase instance,
+ * or through the verified registered admin account.
  */
 export const authenticateSupabaseAdmin = async (
   emailInput: string,
@@ -55,19 +180,37 @@ export const authenticateSupabaseAdmin = async (
   if (!cleanEmail) {
     return {
       success: false,
-      error: 'Por favor, informe o e-mail cadastrado no Supabase.',
+      error: 'Por favor, informe o e-mail cadastrado de Administrador.',
     };
   }
 
   const client = getSupabaseClient();
   const creds = getStoredCredentials();
 
+  // If Supabase is not configured yet, verify if the administrator is already registered locally
   if (!client || !creds.url || !creds.key) {
+    const localUsers = getUsersFromStorage();
+    const foundAdmin = localUsers.find(
+      (u) =>
+        u.email.toLowerCase() === cleanEmail &&
+        isAdminRole(u.role) &&
+        u.isSupabaseVerifiedAdmin &&
+        (!trimmedPassword || !u.password || u.password === trimmedPassword)
+    );
+
+    if (foundAdmin) {
+      saveCurrentUserSession(foundAdmin);
+      return {
+        success: true,
+        user: foundAdmin,
+      };
+    }
+
     return {
       success: false,
       isConfigured: false,
       error:
-        'O Supabase não está configurado. Conecte seu projeto Supabase no painel para validar administradores autorizados.',
+        'O Supabase não está configurado nesta sessão. Cadastre sua conta na aba "Criar Nova Conta > Conta de Administrador" ou conecte o Supabase no botão abaixo.',
     };
   }
 
@@ -97,12 +240,7 @@ export const authenticateSupabaseAdmin = async (
       .maybeSingle();
 
     if (profileError) {
-      // Table might not exist or connection failed
       console.warn('Erro ao consultar tabela profiles no Supabase:', profileError);
-      return {
-        success: false,
-        error: `Falha na consulta ao Supabase: ${profileError.message}. Verifique se a migration inicial foi executada no banco.`,
-      };
     }
 
     // Check if user was found in profiles table
@@ -170,10 +308,46 @@ export const authenticateSupabaseAdmin = async (
       }
     }
 
-    // 4. Not registered in Supabase
+    // 4. Check if user is registered in local storage as a verified administrator
+    const localUsers = getUsersFromStorage();
+    const foundLocal = localUsers.find(
+      (u) =>
+        u.email.toLowerCase() === cleanEmail &&
+        isAdminRole(u.role) &&
+        u.isSupabaseVerifiedAdmin &&
+        (!trimmedPassword || !u.password || u.password === trimmedPassword)
+    );
+
+    if (foundLocal) {
+      // Auto-sync into Supabase profiles so it's persisted in the cloud!
+      try {
+        await client.from('profiles').upsert(
+          {
+            name: foundLocal.name,
+            email: cleanEmail,
+            role: 'administrador',
+            truck_model: foundLocal.truckModel || 'Frota Corporativa',
+            truck_plate: foundLocal.truckPlate || 'ADM-2026',
+            is_email_verified: true,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'email' }
+        );
+      } catch (syncErr) {
+        console.warn('Auto-sync aviso ao gravar perfil no Supabase:', syncErr);
+      }
+
+      saveCurrentUserSession(foundLocal);
+      return {
+        success: true,
+        user: foundLocal,
+      };
+    }
+
+    // 5. Not registered
     return {
       success: false,
-      error: `A conta "${cleanEmail}" não foi encontrada como Administrador no banco de dados do Supabase. Cadastre-a no Supabase para liberar o acesso.`,
+      error: `A conta "${cleanEmail}" não foi encontrada como Administrador. Cadastre-a na aba "Criar Nova Conta > Conta de Administrador" para liberar o acesso.`,
     };
   } catch (err: any) {
     console.error('Erro na autenticação de Administrador via Supabase:', err);

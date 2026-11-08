@@ -169,9 +169,17 @@ export interface User {
   role: UserRole;
   rntrc?: string;
   phone?: string;
+  cpf?: string;
+  cnhNumber?: string;
+  cnhCategory?: string;
+  cnhDueDate?: string;
+  toxicologyDueDate?: string;
+  hasEar?: boolean;
   truckModel: string;
   truckPlate: string;
-  cnhCategory?: string;
+  assignedVehicleId?: string;
+  contractType?: 'clt' | 'autonomo_tac' | 'agregado';
+  status?: 'ativo' | 'inativo' | 'bloqueado';
   avatarUrl?: string;
   isEmailVerified?: boolean;
   verificationToken?: string;
@@ -180,6 +188,27 @@ export interface User {
   supabaseUserId?: string;
   isSupabaseVerifiedAdmin?: boolean;
   authProvider?: 'local' | 'supabase';
+}
+
+export type VehicleStatus = 'operacional' | 'em_viagem' | 'manutencao' | 'disponivel';
+
+export interface FleetVehicle {
+  id: string;
+  plate: string;
+  model: string;
+  type: string;
+  axles: VehicleAxles;
+  year?: number;
+  renavam?: string;
+  chassis?: string;
+  payloadCapacityTon: number;
+  targetConsumptionKmL: number;
+  currentOdometerKm: number;
+  status: VehicleStatus;
+  assignedDriverId?: string;
+  assignedDriverName?: string;
+  notes?: string;
+  createdAt: string;
 }
 
 export type DriverDocumentType =

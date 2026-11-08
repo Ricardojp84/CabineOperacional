@@ -45,16 +45,19 @@ import {
   ArrowDownRight,
   Percent,
 } from 'lucide-react';
+import { User } from '../types/cockpit';
+import { withAdminPermission } from '../middlewares/permissionMiddleware';
 
 interface AnnualProfitReportModalProps {
   isOpen: boolean;
   onClose: () => void;
   onOpenSupabaseConfig?: () => void;
+  currentUser?: User | null;
 }
 
 type ChartViewMode = 'lucro' | 'comparativo' | 'margem';
 
-export const AnnualProfitReportModal: React.FC<AnnualProfitReportModalProps> = ({
+const AnnualProfitReportModalContent: React.FC<AnnualProfitReportModalProps> = ({
   isOpen,
   onClose,
   onOpenSupabaseConfig,
@@ -833,3 +836,7 @@ export const AnnualProfitReportModal: React.FC<AnnualProfitReportModalProps> = (
     </div>
   );
 };
+
+export const AnnualProfitReportModal = withAdminPermission(AnnualProfitReportModalContent, {
+  resourceTitle: 'Relatório Financeiro & Lucro Anual',
+});

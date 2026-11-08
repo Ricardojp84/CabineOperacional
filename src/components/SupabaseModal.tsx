@@ -36,6 +36,7 @@ import {
   Sparkles,
   ShieldAlert,
 } from 'lucide-react';
+import { withAdminPermission } from '../middlewares/permissionMiddleware';
 
 interface SupabaseModalProps {
   isOpen: boolean;
@@ -188,7 +189,7 @@ CREATE POLICY "checkpoints_all" ON public.checkpoints FOR ALL USING (true);
 CREATE POLICY "maintenance_all" ON public.maintenance_items FOR ALL USING (true);
 CREATE POLICY "driver_shifts_all" ON public.driver_shifts FOR ALL USING (true);`;
 
-export const SupabaseModal: React.FC<SupabaseModalProps> = ({
+const SupabaseModalContent: React.FC<SupabaseModalProps> = ({
   isOpen,
   onClose,
   activeTrip,
@@ -827,3 +828,7 @@ export const SupabaseModal: React.FC<SupabaseModalProps> = ({
     </div>
   );
 };
+
+export const SupabaseModal = withAdminPermission(SupabaseModalContent, {
+  resourceTitle: 'Integração Supabase & Banco na Nuvem',
+});

@@ -21,6 +21,7 @@ import {
   HardDrive,
   Database,
   BarChart3,
+  Users,
 } from 'lucide-react';
 
 interface HeaderCockpitProps {
@@ -41,6 +42,7 @@ interface HeaderCockpitProps {
   onOpenAnnualReport?: () => void;
   onOpenVehicleSettings?: () => void;
   onOpenResetData?: () => void;
+  onOpenFleetManagement?: () => void;
 }
 
 export const HeaderCockpit: React.FC<HeaderCockpitProps> = ({
@@ -61,6 +63,7 @@ export const HeaderCockpit: React.FC<HeaderCockpitProps> = ({
   onOpenAnnualReport,
   onOpenVehicleSettings,
   onOpenResetData,
+  onOpenFleetManagement,
 }) => {
   const [timeStr, setTimeStr] = useState<string>('');
   const [soundOn, setSoundOn] = useState<boolean>(isSoundEnabled());
@@ -188,9 +191,21 @@ export const HeaderCockpit: React.FC<HeaderCockpitProps> = ({
             <span className="hidden sm:inline">Google Maps</span>
           </button>
 
-          {/* Administrative Functions: Backup JSON & Supabase Cloud (Admin Only) */}
+          {/* Administrative Functions: Frota & Motoristas, Backup JSON & Supabase Cloud (Admin Only) */}
           {isAdmin ? (
             <>
+              <button
+                onClick={() => {
+                  playCockpitClick();
+                  if (onOpenFleetManagement) onOpenFleetManagement();
+                }}
+                className="h-10 px-2.5 sm:px-3 bg-[#081425] hover:bg-[#152031] border border-[#f59e0b]/60 text-[#ffb95f] rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer active:scale-95 shadow-xs"
+                title="Gestão de Frota: Cadastrar Veículos e Motoristas com Acesso Restrito (Administração)"
+              >
+                <Users className="w-4 h-4 text-[#f59e0b]" />
+                <span className="hidden md:inline">Frota & Motoristas</span>
+              </button>
+
               <button
                 onClick={() => {
                   playCockpitClick();

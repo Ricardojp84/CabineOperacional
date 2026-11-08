@@ -13,6 +13,7 @@ import {
   Trash2,
   Check,
 } from 'lucide-react';
+import { withAdminPermission } from '../middlewares/permissionMiddleware';
 
 interface ResetDataModalProps {
   isOpen: boolean;
@@ -23,21 +24,25 @@ interface ResetDataModalProps {
 }
 
 const POPULAR_TRUCK_MODELS = [
-  'Scania R540 6x4 Super',
-  'Volvo FH 540 6x4 Globetrotter',
-  'Mercedes-Benz Actros 2651 6x4',
-  'DAF XF 530 6x4 Super Space Cab',
-  'Volkswagen Meteor 29.520 6x4',
-  'Scania R450 6x2',
-  'Volvo FH 460 6x2',
-  'Iveco S-Way 540 6x4',
-  'Mercedes-Benz Axor 2544 6x2',
-  'Volkswagen Constellation 25.460',
-  'Cavalo Mecânico 6x2 (Padrão)',
-  'Cavalo Mecânico 6x4 (Traçado)',
+  'Hyundai HR 2.5 Turbo (2 Eixos)',
+  'Volkswagen Delivery Express (2 Eixos)',
+  'Volkswagen Delivery 11.180 (2 Eixos)',
+  'Mercedes-Benz Accelo 1016 (2 Eixos)',
+  'Kia Bongo K2500 (2 Eixos)',
+  'Volkswagen Constellation 24.280 (3 Eixos)',
+  'Mercedes-Benz Atego 2426 (3 Eixos)',
+  'Volvo VM 330 8x2 (4 Eixos Bitruck)',
+  'Scania R540 6x4 Super (6 Eixos)',
+  'Volvo FH 540 6x4 Globetrotter (6 Eixos)',
+  'Mercedes-Benz Actros 2651 6x4 (6 Eixos)',
+  'DAF XF 530 6x4 Super Space Cab (6 Eixos)',
+  'Volkswagen Meteor 29.520 6x4 (6 Eixos)',
+  'Scania R450 6x2 (5 Eixos)',
+  'Bitrem 7 Eixos (57t)',
+  'Rodotrem 9 Eixos (74t)',
 ];
 
-export const ResetDataModal: React.FC<ResetDataModalProps> = ({
+const ResetDataModalContent: React.FC<ResetDataModalProps> = ({
   isOpen,
   onClose,
   currentTrip,
@@ -356,10 +361,13 @@ export const ResetDataModal: React.FC<ResetDataModalProps> = ({
                   onChange={(e) => setAxles(Number(e.target.value) as VehicleAxles)}
                   className="w-full h-11 bg-[#152031] border border-[#334155] focus:border-[#ffb95f] rounded-xl px-3 text-[#d8e3fb] font-bold text-xs outline-hidden"
                 >
-                  <option value={5}>5 Eixos (Carreta 2 Eixos)</option>
-                  <option value={6}>6 Eixos (Vanderléia / 3 Eixos)</option>
-                  <option value={7}>7 Eixos (Bitrem)</option>
-                  <option value={9}>9 Eixos (Rodotrem / Tritrem)</option>
+                  <option value={2}>2 Eixos (VUC, HR, Delivery, Toco)</option>
+                  <option value={3}>3 Eixos (Truck 6x2 - 23t)</option>
+                  <option value={4}>4 Eixos (Bitruck 8x2 - 29t)</option>
+                  <option value={5}>5 Eixos (Carreta 2 Eixos - 41.5t)</option>
+                  <option value={6}>6 Eixos (Carreta LS 3 Eixos - 48.5t)</option>
+                  <option value={7}>7 Eixos (Bitrem - 57t)</option>
+                  <option value={9}>9 Eixos (Rodotrem / Tritrem - 74t)</option>
                 </select>
               </div>
             </div>
@@ -466,3 +474,7 @@ export const ResetDataModal: React.FC<ResetDataModalProps> = ({
     </div>
   );
 };
+
+export const ResetDataModal = withAdminPermission(ResetDataModalContent, {
+  resourceTitle: 'Zerar Dados do Sistema',
+});

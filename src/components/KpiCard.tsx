@@ -6,7 +6,7 @@ interface KpiCardProps {
   value: string | number;
   unit?: string;
   subValue?: string;
-  variant?: 'profit' | 'expense' | 'neutral' | 'accent' | 'warning';
+  variant?: 'profit' | 'expense' | 'neutral' | 'accent' | 'warning' | 'loss';
   icon?: LucideIcon;
   badge?: string;
   onClick?: () => void;
@@ -24,6 +24,13 @@ export const KpiCard: React.FC<KpiCardProps> = ({
 }) => {
   const getVariantStyles = () => {
     switch (variant) {
+      case 'loss':
+        return {
+          valueColor: 'text-[#ef4444]',
+          borderColor: 'border-[#ef4444]/60',
+          badgeBg: 'bg-[#450a0a] text-[#fca5a5] border border-[#ef4444]/40',
+          iconColor: 'text-[#ef4444]',
+        };
       case 'profit':
         return {
           valueColor: 'text-[#10b981]',

@@ -89,6 +89,39 @@ export interface MaintenanceItem {
   recommendedPart?: string;
 }
 
+export type PreTripCheckCategory =
+  | 'iluminacao'
+  | 'freios_pneus'
+  | 'motor_fluidos'
+  | 'seguranca_cabine'
+  | 'documentacao_carga';
+
+export interface PreTripChecklistItem {
+  id: string;
+  label: string;
+  description: string;
+  category: PreTripCheckCategory;
+  mandatory: boolean;
+  completed: boolean;
+  completedAt?: string;
+}
+
+export type PreTripInspectionStatus =
+  | 'pendente'
+  | 'em_andamento'
+  | 'aprovada'
+  | 'aprovada_com_ressalvas';
+
+export interface PreTripInspection {
+  tripId: string;
+  items: PreTripChecklistItem[];
+  status: PreTripInspectionStatus;
+  notes?: string;
+  savedAt?: string;
+  inspectorName?: string;
+  odometerAtInspection?: number;
+}
+
 export interface Trip {
   id: string;
   title: string;
@@ -120,6 +153,12 @@ export interface Trip {
   
   checkpoints: RouteCheckpoint[];
   expenses: Expense[];
+  preTripInspection?: PreTripInspection;
+
+  // Freight Helper (Ajudante no Frete)
+  hasFreightHelper?: boolean;
+  freightHelperName?: string;
+  freightHelperCost?: number;
   
   startedAt: string;
   estimatedArrival: string;
@@ -133,6 +172,24 @@ export type UserRole =
   | 'motorista'
   | 'motorista_autonomo'
   | 'motorista_agregado';
+
+export interface DriverOperationalFunctions {
+  routeAndMaps: boolean;
+  fuelAndExpenses: boolean;
+  tachographAndShift: boolean;
+  maintenanceAndChecklist: boolean;
+  weatherAndProductivity: boolean;
+  freightSimulator: boolean;
+}
+
+export const DEFAULT_DRIVER_FUNCTIONS: DriverOperationalFunctions = {
+  routeAndMaps: true,
+  fuelAndExpenses: true,
+  tachographAndShift: true,
+  maintenanceAndChecklist: true,
+  weatherAndProductivity: true,
+  freightSimulator: true,
+};
 
 /**
  * Checks if the given role or user is an Administrator with full system powers
@@ -161,6 +218,34 @@ export const isDriverRole = (role?: UserRole | string | null): boolean => {
   return !isUserAdmin({ role: (role as UserRole) || 'motorista', id: '', name: '', email: '', truckModel: '', truckPlate: '', createdAt: '' });
 };
 
+/**
+ * Returns the resolved operational driver functions for a user.
+ * Administrators always have all operational functions enabled alongside admin powers.
+ * Drivers receive only their configured driver-only functions (all active by default).
+ */
+export const getDriverFunctions = (user?: User | null): DriverOperationalFunctions => {
+  if (isUserAdmin(user)) {
+    return { ...DEFAULT_DRIVER_FUNCTIONS };
+  }
+  return {
+    ...DEFAULT_DRIVER_FUNCTIONS,
+    ...(user?.driverFunctions || {}),
+  };
+};
+
+/**
+ * Checks if a specific driver-only operational function is active for the user.
+ */
+export const hasDriverFunction = (
+  user: User | null | undefined,
+  fn: keyof DriverOperationalFunctions
+): boolean => {
+  if (isUserAdmin(user)) return true;
+  if (user?.status === 'bloqueado') return false;
+  const fns = getDriverFunctions(user);
+  return Boolean(fns[fn]);
+};
+
 export interface User {
   id: string;
   name: string;
@@ -180,6 +265,11 @@ export interface User {
   assignedVehicleId?: string;
   contractType?: 'clt' | 'autonomo_tac' | 'agregado';
   status?: 'ativo' | 'inativo' | 'bloqueado';
+  // Driver-only operational functions & Freight helper settings
+  driverFunctions?: DriverOperationalFunctions;
+  hasFreightHelper?: boolean;
+  freightHelperName?: string;
+  freightHelperDailyCost?: number;
   avatarUrl?: string;
   isEmailVerified?: boolean;
   verificationToken?: string;
@@ -238,3 +328,20 @@ export interface DriverDocumentReminder {
   lastRenewedAt?: string;
 }
 
+export type TireConditionStatus = 'bom' | 'alerta_80' | 'critico';
+
+export type TireLifeStage = 'novo' | '1_recapagem' | '2_recapagem';
+
+export interface TireMonitorItem {
+  id: string;
+  position: string; // ex: "Dianteiro Esquerdo (Eixo 1)"
+  axleNumber: number; // 1 a 9
+  brandModel: string; // ex: "Michelin X Multi Z 295/80 R22.5"
+  fireNumber?: string; // Número de fogo / controle interno (ex: "F-0102")
+  dotCode?: string; // Código DOT de fabricação (ex: "2425")
+  lifeStage: TireLifeStage;
+  currentTireKm: number; // Quilometragem atual rodada neste pneu
+  estimatedLifeKm: number; // Vida útil total estimada em KM (ex: 80000)
+  lastUpdatedAt: string; // ISO string
+  notes?: string;
+}

@@ -1,5 +1,14 @@
 import React, { useState, useMemo } from 'react';
-import { FleetVehicle, User, UserRole, VehicleAxles, VehicleStatus } from '../types/cockpit';
+import {
+  FleetVehicle,
+  User,
+  UserRole,
+  VehicleAxles,
+  VehicleStatus,
+  DriverOperationalFunctions,
+  DEFAULT_DRIVER_FUNCTIONS,
+  getDriverFunctions,
+} from '../types/cockpit';
 import {
   getFleetVehicles,
   saveFleetVehicles,
@@ -10,6 +19,7 @@ import {
   updateDriverByAdmin,
   deleteDriverByAdmin,
   toggleDriverStatus,
+  toggleDriverFreightHelper,
 } from '../services/fleetService';
 import { getUsersFromStorage } from '../data/mockUsers';
 import { playCockpitClick, playSuccessChime, playAlertBeep } from '../utils/audio';
@@ -45,6 +55,10 @@ import {
   Car,
   BadgeCheck,
   Send,
+  UserCheck,
+  UserMinus,
+  Sliders,
+  PlayCircle,
 } from 'lucide-react';
 import { withAdminPermission } from '../middlewares/permissionMiddleware';
 
@@ -53,13 +67,52 @@ interface FleetManagementModalProps {
   onClose: () => void;
   currentUser?: User | null;
   onSelectVehicleForTrip?: (vehicle: FleetVehicle) => void;
+  onActivateDriverSession?: (driver: User) => void;
 }
+
+const DRIVER_FUNCTION_DEFINITIONS: {
+  key: keyof DriverOperationalFunctions;
+  label: string;
+  description: string;
+}[] = [
+  {
+    key: 'routeAndMaps',
+    label: 'Roteiro, GPS & Maps',
+    description: 'Visualizar checkpoints, abrir Google Maps e registrar paradas',
+  },
+  {
+    key: 'fuelAndExpenses',
+    label: 'Abastecimento & Despesas',
+    description: 'Lançar diesel/Arla, pedágios, alimentação e notas na viagem',
+  },
+  {
+    key: 'tachographAndShift',
+    label: 'Tacógrafo & Jornada (4h)',
+    description: 'Controlar direção contínua, pausas personalizadas e Lei 13.103',
+  },
+  {
+    key: 'maintenanceAndChecklist',
+    label: 'Checklist, Pneus & Oficina',
+    description: 'Inspeção pré-viagem obrigatória, calibragem e alertas de oficina',
+  },
+  {
+    key: 'weatherAndProductivity',
+    label: 'Clima & Produtividade km/L',
+    description: 'Previsão meteorológica na rota e comparativo de consumo km/L',
+  },
+  {
+    key: 'freightSimulator',
+    label: 'Simulador ANTT & Balanço',
+    description: 'Simular frete ANTT e visualizar resumo operacional da viagem',
+  },
+];
 
 const FleetManagementModalContent: React.FC<FleetManagementModalProps> = ({
   isOpen,
   onClose,
   currentUser,
   onSelectVehicleForTrip,
+  onActivateDriverSession,
 }) => {
   const [activeTab, setActiveTab] = useState<'motoristas' | 'veiculos'>('motoristas');
 
@@ -93,9 +146,19 @@ const FleetManagementModalContent: React.FC<FleetManagementModalProps> = ({
   const [driverAssignedVehicleId, setDriverAssignedVehicleId] = useState('');
   const [driverContractType, setDriverContractType] = useState<'clt' | 'autonomo_tac' | 'agregado'>('clt');
   const [driverStatus, setDriverStatus] = useState<'ativo' | 'inativo' | 'bloqueado'>('ativo');
+  const [driverHasFreightHelper, setDriverHasFreightHelper] = useState(false);
+  const [driverHelperName, setDriverHelperName] = useState('');
+  const [driverHelperDailyCost, setDriverHelperDailyCost] = useState<number>(180);
+  const [driverFunctions, setDriverFunctions] = useState<DriverOperationalFunctions>({
+    ...DEFAULT_DRIVER_FUNCTIONS,
+  });
   const [showDriverPassword, setShowDriverPassword] = useState(false);
   const [driverFormError, setDriverFormError] = useState('');
   const [driverFormSuccess, setDriverFormSuccess] = useState('');
+
+  // Inline deletion confirmations (iframe-safe, no window.confirm)
+  const [confirmDeleteDriverId, setConfirmDeleteDriverId] = useState<string | null>(null);
+  const [confirmDeleteVehicleId, setConfirmDeleteVehicleId] = useState<string | null>(null);
 
   // Vehicle modal form states
   const [isVehicleFormOpen, setIsVehicleFormOpen] = useState(false);
@@ -179,6 +242,10 @@ const FleetManagementModalContent: React.FC<FleetManagementModalProps> = ({
     setDriverAssignedVehicleId('');
     setDriverContractType('clt');
     setDriverStatus('ativo');
+    setDriverHasFreightHelper(false);
+    setDriverHelperName('');
+    setDriverHelperDailyCost(180);
+    setDriverFunctions({ ...DEFAULT_DRIVER_FUNCTIONS });
     setDriverFormError('');
     setDriverFormSuccess('');
     setIsDriverFormOpen(true);
@@ -191,7 +258,7 @@ const FleetManagementModalContent: React.FC<FleetManagementModalProps> = ({
     setDriverName(driver.name);
     setDriverEmail(driver.email);
     setDriverPassword(driver.password || 'estrada2026');
-    setDriverRole(driver.role);
+    setDriverRole(driver.role === 'motorista_autonomo' || driver.role === 'motorista_agregado' ? driver.role : 'motorista');
     setDriverPhone(driver.phone || '');
     setDriverCpf(driver.cpf || '');
     setDriverRntrc(driver.rntrc || '');
@@ -203,6 +270,10 @@ const FleetManagementModalContent: React.FC<FleetManagementModalProps> = ({
     setDriverAssignedVehicleId(driver.assignedVehicleId || '');
     setDriverContractType(driver.contractType || 'clt');
     setDriverStatus(driver.status || 'ativo');
+    setDriverHasFreightHelper(Boolean(driver.hasFreightHelper));
+    setDriverHelperName(driver.freightHelperName || '');
+    setDriverHelperDailyCost(driver.freightHelperDailyCost ?? 180);
+    setDriverFunctions(getDriverFunctions(driver));
     setDriverFormError('');
     setDriverFormSuccess('');
     setIsDriverFormOpen(true);
@@ -241,6 +312,10 @@ const FleetManagementModalContent: React.FC<FleetManagementModalProps> = ({
         assignedVehicleId: driverAssignedVehicleId || undefined,
         contractType: driverContractType,
         status: driverStatus,
+        hasFreightHelper: driverHasFreightHelper,
+        freightHelperName: driverHasFreightHelper ? (driverHelperName.trim() || 'Ajudante de Frete') : undefined,
+        freightHelperDailyCost: driverHasFreightHelper ? Math.max(0, driverHelperDailyCost || 0) : 0,
+        driverFunctions,
       });
 
       if (res.success) {
@@ -252,7 +327,7 @@ const FleetManagementModalContent: React.FC<FleetManagementModalProps> = ({
         setDriverFormError(res.error || 'Erro ao atualizar motorista.');
       }
     } else {
-      // Register New Driver
+      // Register New Driver (strictly driver-only)
       const res = await registerDriverByAdmin({
         name: driverName.trim(),
         email: driverEmail.trim().toLowerCase(),
@@ -269,6 +344,10 @@ const FleetManagementModalContent: React.FC<FleetManagementModalProps> = ({
         assignedVehicleId: driverAssignedVehicleId || undefined,
         contractType: driverContractType,
         status: driverStatus,
+        hasFreightHelper: driverHasFreightHelper,
+        freightHelperName: driverHasFreightHelper ? (driverHelperName.trim() || 'Ajudante de Frete') : undefined,
+        freightHelperDailyCost: driverHasFreightHelper ? Math.max(0, driverHelperDailyCost || 0) : 0,
+        driverFunctions,
       });
 
       if (res.success) {
@@ -289,20 +368,29 @@ const FleetManagementModalContent: React.FC<FleetManagementModalProps> = ({
     refreshData();
   };
 
-  // Delete Driver
-  const handleDeleteDriver = (driver: User) => {
-    if (confirm(`Tem certeza que deseja excluir o motorista ${driver.name}? Esta ação revogará seu acesso.`)) {
-      playCockpitClick();
-      deleteDriverByAdmin(driver.id);
-      refreshData();
-    }
+  // Quick toggle Freight Helper on card
+  const handleQuickToggleHelper = (driverId: string) => {
+    playCockpitClick();
+    toggleDriverFreightHelper(driverId);
+    refreshData();
+  };
+
+  // Delete Driver (inline confirmation, iframe-safe)
+  const handleConfirmDeleteDriver = (driverId: string) => {
+    playCockpitClick();
+    deleteDriverByAdmin(driverId);
+    setConfirmDeleteDriverId(null);
+    refreshData();
   };
 
   // Copy Access Credentials for Driver
   const handleCopyAccess = (driver: User) => {
     playCockpitClick();
     const appUrl = window.location.origin;
-    const text = `🚚 *CABINE OPERACIONAL DO CAMINHONEIRO - ACESSO LIBERADO*\n\nOlá, ${driver.name}!\nSeu cadastro de motorista foi liberado pelo Administrador da frota.\n\n🔗 *Link de Acesso:* ${appUrl}\n👤 *Login / E-mail:* ${driver.email}\n🔑 *Senha de Acesso:* ${driver.password || 'estrada2026'}\n🚛 *Veículo Designado:* ${driver.truckModel} (${driver.truckPlate})\n\n_Seu acesso é restrito ao painel operacional de bordo (rotas, odômetro, tacógrafo e abastecimentos)._`;
+    const helperLabel = driver.hasFreightHelper
+      ? `Sim (${driver.freightHelperName || 'Ajudante'} • Diária R$ ${(driver.freightHelperDailyCost ?? 180).toFixed(2)})`
+      : 'Não (Motorista Solo)';
+    const text = `🚚 *CABINE OPERACIONAL DO CAMINHONEIRO - ACESSO LIBERADO*\n\nOlá, ${driver.name}!\nSeu cadastro de motorista foi liberado pelo Administrador da frota.\n\n🔗 *Link de Acesso:* ${appUrl}\n👤 *Login / E-mail:* ${driver.email}\n🔑 *Senha de Acesso:* ${driver.password || 'estrada2026'}\n🚛 *Veículo Designado:* ${driver.truckModel} (${driver.truckPlate})\n👷 *Ajudante no Frete:* ${helperLabel}\n\n_Seu acesso é restrito às funções operacionais de motorista (rotas, odômetro, tacógrafo e abastecimentos)._`;
 
     navigator.clipboard.writeText(text);
     setCopiedDriverId(driver.id);
@@ -396,13 +484,12 @@ const FleetManagementModalContent: React.FC<FleetManagementModalProps> = ({
     setIsVehicleFormOpen(false);
   };
 
-  // Delete Vehicle
-  const handleDeleteVehicle = (veh: FleetVehicle) => {
-    if (confirm(`Tem certeza que deseja remover o veículo ${veh.model} (${veh.plate}) da frota?`)) {
-      playCockpitClick();
-      deleteFleetVehicle(veh.id);
-      refreshData();
-    }
+  // Delete Vehicle (inline confirmation, iframe-safe)
+  const handleConfirmDeleteVehicle = (vehId: string) => {
+    playCockpitClick();
+    deleteFleetVehicle(vehId);
+    setConfirmDeleteVehicleId(null);
+    refreshData();
   };
 
   return (
@@ -576,6 +663,10 @@ const FleetManagementModalContent: React.FC<FleetManagementModalProps> = ({
                   filteredDrivers.map((driver) => {
                     const isBlocked = driver.status === 'bloqueado';
                     const isCopied = copiedDriverId === driver.id;
+                    const resolvedFns = getDriverFunctions(driver);
+                    const activeFnCount = Object.values(resolvedFns).filter(Boolean).length;
+                    const totalFnCount = Object.keys(DEFAULT_DRIVER_FUNCTIONS).length;
+                    const hasHelper = Boolean(driver.hasFreightHelper);
 
                     return (
                       <div
@@ -652,52 +743,132 @@ const FleetManagementModalContent: React.FC<FleetManagementModalProps> = ({
                           </div>
                         </div>
 
-                        {/* Action buttons row */}
-                        <div className="flex items-center justify-between gap-1.5 pt-1 border-t border-[#334155]/50 flex-wrap">
-                          <button
-                            type="button"
-                            onClick={() => handleCopyAccess(driver)}
-                            className="h-8 px-2.5 rounded-lg bg-[#0c4a6e] hover:bg-[#0284c7] text-[#38bdf8] hover:text-white text-[11px] font-bold flex items-center gap-1 transition-all cursor-pointer"
-                            title="Copiar mensagem com login e senha prontos para enviar ao motorista"
-                          >
-                            {isCopied ? <Check className="w-3.5 h-3.5 text-[#34d399]" /> : <Copy className="w-3.5 h-3.5" />}
-                            <span>{isCopied ? 'Copiado p/ WhatsApp!' : 'Copiar Acesso'}</span>
-                          </button>
+                        {/* Driver-Only Functions & Freight Helper Summary Strip */}
+                        <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-lg bg-[#0c1322] border border-[#334155]/70 text-[11px]">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="px-2 py-0.5 rounded bg-[#1e293b] text-[#38bdf8] border border-[#38bdf8]/30 font-bold flex items-center gap-1">
+                              <Sliders className="w-3 h-3" />
+                              Somente Motorista ({activeFnCount}/{totalFnCount})
+                            </span>
 
-                          <div className="flex items-center gap-1.5">
                             <button
                               type="button"
-                              onClick={() => handleToggleStatus(driver.id)}
-                              className={`h-8 px-2.5 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-all cursor-pointer ${
-                                isBlocked
-                                  ? 'bg-[#003824] hover:bg-[#004d32] text-[#34d399] border border-[#10b981]/50'
-                                  : 'bg-[#450a0a] hover:bg-[#690005] text-[#fca5a5] border border-[#ef4444]/50'
+                              onClick={() => handleQuickToggleHelper(driver.id)}
+                              title="Clique para alternar se este motorista opera com ajudante no frete ou sozinho"
+                              className={`px-2 py-0.5 rounded font-bold flex items-center gap-1 cursor-pointer transition-all ${
+                                hasHelper
+                                  ? 'bg-[#472a00] text-[#ffb95f] border border-[#f59e0b]/50 hover:bg-[#5c3700]'
+                                  : 'bg-[#1e293b] text-[#94a3b8] border border-[#334155] hover:text-[#d8e3fb]'
                               }`}
-                              title={isBlocked ? 'Reativar acesso do motorista' : 'Bloquear temporariamente acesso do motorista'}
                             >
-                              {isBlocked ? <Unlock className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
-                              <span>{isBlocked ? 'Desbloquear' : 'Bloquear'}</span>
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => handleOpenEditDriver(driver)}
-                              className="h-8 w-8 rounded-lg bg-[#1e293b] hover:bg-[#243248] text-[#bec6e0] hover:text-[#ffb95f] flex items-center justify-center cursor-pointer transition-colors"
-                              title="Editar dados do motorista"
-                            >
-                              <Edit2 className="w-3.5 h-3.5" />
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteDriver(driver)}
-                              className="h-8 w-8 rounded-lg bg-[#1e293b] hover:bg-[#450a0a] text-[#94a3b8] hover:text-[#ef4444] flex items-center justify-center cursor-pointer transition-colors"
-                              title="Excluir motorista"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
+                              {hasHelper ? (
+                                <>
+                                  <UserCheck className="w-3 h-3 text-[#ffb95f]" />
+                                  <span>
+                                    Com Ajudante
+                                    {driver.freightHelperDailyCost ? ` (R$ ${driver.freightHelperDailyCost})` : ''}
+                                  </span>
+                                </>
+                              ) : (
+                                <>
+                                  <UserMinus className="w-3 h-3" />
+                                  <span>Sem Ajudante (Solo)</span>
+                                </>
+                              )}
                             </button>
                           </div>
+
+                          {onActivateDriverSession && !isBlocked && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                playSuccessChime();
+                                onActivateDriverSession(driver);
+                                onClose();
+                              }}
+                              className="px-2.5 py-1 rounded-md bg-[#003824] hover:bg-[#004d32] border border-[#10b981]/60 text-[#34d399] font-extrabold text-[10px] flex items-center gap-1 cursor-pointer transition-all active:scale-95"
+                              title="Ativar sessão deste motorista com funções operacionais apenas"
+                            >
+                              <PlayCircle className="w-3 h-3" />
+                              <span>Ativar Motorista</span>
+                            </button>
+                          )}
                         </div>
+
+                        {/* Inline Delete Confirmation */}
+                        {confirmDeleteDriverId === driver.id ? (
+                          <div className="p-2.5 rounded-lg bg-[#450a0a] border border-[#ef4444] flex items-center justify-between gap-2 text-xs">
+                            <span className="text-[#fca5a5] font-bold">
+                              Excluir {driver.name.split(' ')[0]}?
+                            </span>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteDriverId(null)}
+                                className="px-2.5 py-1 rounded bg-[#1e293b] text-[#d8e3fb] font-bold cursor-pointer"
+                              >
+                                Não
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleConfirmDeleteDriver(driver.id)}
+                                className="px-2.5 py-1 rounded bg-[#ef4444] text-white font-black cursor-pointer"
+                              >
+                                Sim, Excluir
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          /* Action buttons row */
+                          <div className="flex items-center justify-between gap-1.5 pt-1 border-t border-[#334155]/50 flex-wrap">
+                            <button
+                              type="button"
+                              onClick={() => handleCopyAccess(driver)}
+                              className="h-8 px-2.5 rounded-lg bg-[#0c4a6e] hover:bg-[#0284c7] text-[#38bdf8] hover:text-white text-[11px] font-bold flex items-center gap-1 transition-all cursor-pointer"
+                              title="Copiar mensagem com login e senha prontos para enviar ao motorista"
+                            >
+                              {isCopied ? <Check className="w-3.5 h-3.5 text-[#34d399]" /> : <Copy className="w-3.5 h-3.5" />}
+                              <span>{isCopied ? 'Copiado p/ WhatsApp!' : 'Copiar Acesso'}</span>
+                            </button>
+
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleToggleStatus(driver.id)}
+                                className={`h-8 px-2.5 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-all cursor-pointer ${
+                                  isBlocked
+                                    ? 'bg-[#003824] hover:bg-[#004d32] text-[#34d399] border border-[#10b981]/50'
+                                    : 'bg-[#450a0a] hover:bg-[#690005] text-[#fca5a5] border border-[#ef4444]/50'
+                                }`}
+                                title={isBlocked ? 'Reativar acesso do motorista' : 'Bloquear temporariamente acesso do motorista'}
+                              >
+                                {isBlocked ? <Unlock className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
+                                <span>{isBlocked ? 'Desbloquear' : 'Bloquear'}</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditDriver(driver)}
+                                className="h-8 w-8 rounded-lg bg-[#1e293b] hover:bg-[#243248] text-[#bec6e0] hover:text-[#ffb95f] flex items-center justify-center cursor-pointer transition-colors"
+                                title="Editar dados e funções do motorista"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  playCockpitClick();
+                                  setConfirmDeleteDriverId(driver.id);
+                                }}
+                                className="h-8 w-8 rounded-lg bg-[#1e293b] hover:bg-[#450a0a] text-[#94a3b8] hover:text-[#ef4444] flex items-center justify-center cursor-pointer transition-colors"
+                                title="Excluir motorista"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     );
                   })
@@ -865,43 +1036,70 @@ const FleetManagementModalContent: React.FC<FleetManagementModalProps> = ({
                         </div>
 
                         {/* Vehicle Card Actions */}
-                        <div className="flex items-center justify-between gap-2 pt-2 border-t border-[#334155]/60">
-                          {onSelectVehicleForTrip && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                playSuccessChime();
-                                onSelectVehicleForTrip(veh);
-                                onClose();
-                              }}
-                              className="h-8 px-2.5 rounded-lg bg-[#2563eb] hover:bg-[#1d4ed8] text-white text-[11px] font-bold flex items-center gap-1 transition-all cursor-pointer shadow-xs active:scale-95"
-                              title="Definir este veículo como ativo no Cockpit"
-                            >
-                              <Truck className="w-3.5 h-3.5" />
-                              <span>Ativar na Rota</span>
-                            </button>
-                          )}
-
-                          <div className="flex items-center gap-1.5 ml-auto">
-                            <button
-                              type="button"
-                              onClick={() => handleOpenEditVehicle(veh)}
-                              className="h-8 w-8 rounded-lg bg-[#1e293b] hover:bg-[#243248] text-[#bec6e0] hover:text-[#ffb95f] flex items-center justify-center cursor-pointer transition-colors"
-                              title="Editar veículo"
-                            >
-                              <Edit2 className="w-3.5 h-3.5" />
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteVehicle(veh)}
-                              className="h-8 w-8 rounded-lg bg-[#1e293b] hover:bg-[#450a0a] text-[#94a3b8] hover:text-[#ef4444] flex items-center justify-center cursor-pointer transition-colors"
-                              title="Excluir veículo"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                        {confirmDeleteVehicleId === veh.id ? (
+                          <div className="p-2.5 rounded-lg bg-[#450a0a] border border-[#ef4444] flex items-center justify-between gap-2 text-xs">
+                            <span className="text-[#fca5a5] font-bold">
+                              Remover {veh.plate}?
+                            </span>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteVehicleId(null)}
+                                className="px-2 py-1 rounded bg-[#1e293b] text-[#d8e3fb] font-bold cursor-pointer"
+                              >
+                                Não
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleConfirmDeleteVehicle(veh.id)}
+                                className="px-2 py-1 rounded bg-[#ef4444] text-white font-black cursor-pointer"
+                              >
+                                Sim
+                              </button>
+                            </div>
                           </div>
-                        </div>
+                        ) : (
+                          <div className="flex items-center justify-between gap-2 pt-2 border-t border-[#334155]/60">
+                            {onSelectVehicleForTrip && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  playSuccessChime();
+                                  onSelectVehicleForTrip(veh);
+                                  onClose();
+                                }}
+                                className="h-8 px-2.5 rounded-lg bg-[#2563eb] hover:bg-[#1d4ed8] text-white text-[11px] font-bold flex items-center gap-1 transition-all cursor-pointer shadow-xs active:scale-95"
+                                title="Definir este veículo como ativo no Cockpit"
+                              >
+                                <Truck className="w-3.5 h-3.5" />
+                                <span>Ativar na Rota</span>
+                              </button>
+                            )}
+
+                            <div className="flex items-center gap-1.5 ml-auto">
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditVehicle(veh)}
+                                className="h-8 w-8 rounded-lg bg-[#1e293b] hover:bg-[#243248] text-[#bec6e0] hover:text-[#ffb95f] flex items-center justify-center cursor-pointer transition-colors"
+                                title="Editar veículo"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  playCockpitClick();
+                                  setConfirmDeleteVehicleId(veh.id);
+                                }}
+                                className="h-8 w-8 rounded-lg bg-[#1e293b] hover:bg-[#450a0a] text-[#94a3b8] hover:text-[#ef4444] flex items-center justify-center cursor-pointer transition-colors"
+                                title="Excluir veículo"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     );
                   })
@@ -1135,8 +1333,8 @@ const FleetManagementModalContent: React.FC<FleetManagementModalProps> = ({
                 </div>
               </div>
 
-              {/* Veículo Vinculado & Tipo de Contrato */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Veículo Vinculado, Categoria Motorista & Vínculo Contratual */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-[#94a3b8] uppercase mb-1">
                     Vincular Veículo da Frota
@@ -1157,7 +1355,22 @@ const FleetManagementModalContent: React.FC<FleetManagementModalProps> = ({
 
                 <div>
                   <label className="block text-xs font-bold text-[#94a3b8] uppercase mb-1">
-                    Tipo de Vínculo Contratual
+                    Perfil (Somente Motorista)
+                  </label>
+                  <select
+                    value={driverRole}
+                    onChange={(e) => setDriverRole(e.target.value as UserRole)}
+                    className="w-full h-11 bg-[#081425] border border-[#334155] focus:border-[#10b981] rounded-xl px-2.5 text-xs text-[#d8e3fb] font-semibold outline-hidden"
+                  >
+                    <option value="motorista">Motorista (Operacional Frota)</option>
+                    <option value="motorista_autonomo">Motorista Autônomo (TAC)</option>
+                    <option value="motorista_agregado">Motorista Agregado</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-[#94a3b8] uppercase mb-1">
+                    Vínculo Contratual
                   </label>
                   <select
                     value={driverContractType}
@@ -1168,6 +1381,173 @@ const FleetManagementModalContent: React.FC<FleetManagementModalProps> = ({
                     <option value="autonomo_tac">Motorista Autônomo (TAC / RNTRC)</option>
                     <option value="agregado">Motorista Agregado</option>
                   </select>
+                </div>
+              </div>
+
+              {/* Ajudante no Frete (Sim ou Não) */}
+              <div className="p-3.5 rounded-xl bg-[#081425] border border-[#f59e0b]/40 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <span className="text-xs font-black text-[#ffb95f] uppercase tracking-wider flex items-center gap-1.5">
+                      <Users className="w-4 h-4 text-[#f59e0b]" />
+                      Tem Ajudante no Frete?
+                    </span>
+                    <span className="text-[11px] text-[#94a3b8] block mt-0.5">
+                      Define se o motorista viaja com ajudante/chapa na operação ou sozinho (solo).
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 bg-[#152031] p-1 rounded-xl border border-[#334155]">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        playCockpitClick();
+                        setDriverHasFreightHelper(false);
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer flex items-center gap-1 ${
+                        !driverHasFreightHelper
+                          ? 'bg-[#334155] text-white shadow-xs'
+                          : 'text-[#94a3b8] hover:text-[#d8e3fb]'
+                      }`}
+                    >
+                      <UserMinus className="w-3.5 h-3.5" />
+                      <span>Não (Solo)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        playCockpitClick();
+                        setDriverHasFreightHelper(true);
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer flex items-center gap-1 ${
+                        driverHasFreightHelper
+                          ? 'bg-[#f59e0b] text-[#081425] shadow-xs'
+                          : 'text-[#94a3b8] hover:text-[#d8e3fb]'
+                      }`}
+                    >
+                      <UserCheck className="w-3.5 h-3.5" />
+                      <span>Sim (Com Ajudante)</span>
+                    </button>
+                  </div>
+                </div>
+
+                {driverHasFreightHelper && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2 border-t border-[#334155]/60">
+                    <div>
+                      <label className="block text-[10px] font-bold text-[#94a3b8] uppercase mb-1">
+                        Nome / Identificação do Ajudante
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Ex: João Silva / Ajudante Fixo"
+                        value={driverHelperName}
+                        onChange={(e) => setDriverHelperName(e.target.value)}
+                        className="w-full h-10 bg-[#152031] border border-[#334155] focus:border-[#f59e0b] rounded-lg px-2.5 text-xs text-[#d8e3fb] outline-hidden"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold text-[#94a3b8] uppercase mb-1">
+                        Diária / Custo do Ajudante no Frete (R$)
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="10"
+                        value={driverHelperDailyCost}
+                        onChange={(e) => setDriverHelperDailyCost(parseFloat(e.target.value) || 0)}
+                        className="w-full h-10 bg-[#152031] border border-[#f59e0b]/40 focus:border-[#f59e0b] rounded-lg px-2.5 text-xs font-mono font-bold text-[#ffb95f] outline-hidden"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Ativar Funções de Motorista Apenas (Permissões Operacionais) */}
+              <div className="p-3.5 rounded-xl bg-[#081425] border border-[#10b981]/40 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <span className="text-xs font-black text-[#34d399] uppercase tracking-wider flex items-center gap-1.5">
+                      <Sliders className="w-4 h-4 text-[#10b981]" />
+                      Ativar Funções de Motorista Apenas
+                    </span>
+                    <span className="text-[11px] text-[#94a3b8] block mt-0.5">
+                      Privilégios Administrativos (Supabase, Backup, Zerar Dados) permanecem bloqueados.
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        playCockpitClick();
+                        setDriverFunctions({ ...DEFAULT_DRIVER_FUNCTIONS });
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-[#003824] hover:bg-[#004d32] border border-[#10b981]/50 text-[#34d399] text-[10px] font-extrabold cursor-pointer"
+                    >
+                      Ativar Todas (6/6)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        playCockpitClick();
+                        setDriverFunctions({
+                          routeAndMaps: true,
+                          fuelAndExpenses: true,
+                          tachographAndShift: true,
+                          maintenanceAndChecklist: false,
+                          weatherAndProductivity: false,
+                          freightSimulator: false,
+                        });
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-[#1e293b] hover:bg-[#243248] border border-[#334155] text-[#cbd5e1] text-[10px] font-bold cursor-pointer"
+                    >
+                      Básico (Estrada)
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {DRIVER_FUNCTION_DEFINITIONS.map((fnDef) => {
+                    const enabled = driverFunctions[fnDef.key];
+                    return (
+                      <button
+                        key={fnDef.key}
+                        type="button"
+                        onClick={() => {
+                          playCockpitClick();
+                          setDriverFunctions((prev) => ({
+                            ...prev,
+                            [fnDef.key]: !prev[fnDef.key],
+                          }));
+                        }}
+                        className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex items-start justify-between gap-2 ${
+                          enabled
+                            ? 'bg-[#003824]/40 border-[#10b981]/50 text-[#d8e3fb]'
+                            : 'bg-[#152031]/70 border-[#334155] text-[#94a3b8]'
+                        }`}
+                      >
+                        <div className="min-w-0">
+                          <span className="text-[11px] font-extrabold block text-[#d8e3fb]">
+                            {fnDef.label}
+                          </span>
+                          <span className="text-[10px] text-[#94a3b8] leading-snug block mt-0.5">
+                            {fnDef.description}
+                          </span>
+                        </div>
+                        <span
+                          className={`shrink-0 px-1.5 py-0.5 rounded text-[9px] font-black uppercase ${
+                            enabled
+                              ? 'bg-[#10b981] text-[#022c22]'
+                              : 'bg-[#1e293b] text-[#64748b]'
+                          }`}
+                        >
+                          {enabled ? 'Ativa' : 'Off'}
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 

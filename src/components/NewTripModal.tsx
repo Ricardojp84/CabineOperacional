@@ -20,6 +20,8 @@ import {
   Loader2,
   Lock,
   CheckCircle2,
+  UserCheck,
+  Users,
 } from 'lucide-react';
 import { PRESET_TRIPS } from '../data/mockRoutes';
 
@@ -57,6 +59,15 @@ export const NewTripModal: React.FC<NewTripModalProps> = ({
   const [totalDistanceKm, setTotalDistanceKm] = useState(1150);
   const [startOdometerKm, setStartOdometerKm] = useState(435000);
   const [estimatedTollCost, setEstimatedTollCost] = useState(1120);
+  const [hasFreightHelper, setHasFreightHelper] = useState<boolean>(
+    Boolean(currentUser?.hasFreightHelper)
+  );
+  const [freightHelperName, setFreightHelperName] = useState<string>(
+    currentUser?.freightHelperName || ''
+  );
+  const [freightHelperCost, setFreightHelperCost] = useState<number>(
+    currentUser?.freightHelperDailyCost || 180
+  );
 
   // Directly utilize the custom hook useCityAutocomplete for both Origin and Destination
   const originAuto = useCityAutocomplete(origin, {
@@ -150,6 +161,9 @@ export const NewTripModal: React.FC<NewTripModalProps> = ({
       dieselAvgPricePerL: 6.29,
       arlaAvgPricePerL: 2.85,
       estimatedTollCost,
+      hasFreightHelper,
+      freightHelperName: hasFreightHelper ? (freightHelperName.trim() || 'Ajudante de Frete') : undefined,
+      freightHelperCost: hasFreightHelper ? Math.max(0, Number(freightHelperCost) || 0) : 0,
       startedAt: new Date().toISOString(),
       estimatedArrival: 'Em 48 horas',
       isCompleted: false,
@@ -805,6 +819,69 @@ export const NewTripModal: React.FC<NewTripModalProps> = ({
                   />
                 </div>
               </div>
+            </div>
+
+            {/* Freight Helper Option */}
+            <div className="p-3 rounded-xl bg-[#081425] border border-[#334155] space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-[#38bdf8] flex items-center gap-1.5">
+                  <Users className="w-4 h-4 text-[#38bdf8]" />
+                  Tem Ajudante no Frete?
+                </span>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      playCockpitClick();
+                      setHasFreightHelper(false);
+                    }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold border cursor-pointer ${
+                      !hasFreightHelper
+                        ? 'bg-[#1e293b] text-white border-[#94a3b8]'
+                        : 'bg-[#0f172a] text-[#94a3b8] border-[#334155]'
+                    }`}
+                  >
+                    Não (Solo)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      playCockpitClick();
+                      setHasFreightHelper(true);
+                      if (!freightHelperCost || freightHelperCost <= 0) setFreightHelperCost(180);
+                    }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold border cursor-pointer flex items-center gap-1 ${
+                      hasFreightHelper
+                        ? 'bg-[#082f49] text-[#38bdf8] border-[#38bdf8]'
+                        : 'bg-[#0f172a] text-[#94a3b8] border-[#334155]'
+                    }`}
+                  >
+                    <UserCheck className="w-3.5 h-3.5" />
+                    Sim (Com Ajudante)
+                  </button>
+                </div>
+              </div>
+
+              {hasFreightHelper && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                  <input
+                    type="text"
+                    value={freightHelperName}
+                    onChange={(e) => setFreightHelperName(e.target.value)}
+                    placeholder="Nome do Ajudante (opcional)"
+                    className="h-10 bg-[#152031] border border-[#334155] focus:border-[#38bdf8] rounded-xl px-3 text-xs text-[#d8e3fb] outline-hidden"
+                  />
+                  <input
+                    type="number"
+                    min="0"
+                    step="10"
+                    value={freightHelperCost}
+                    onChange={(e) => setFreightHelperCost(Math.max(0, parseFloat(e.target.value) || 0))}
+                    placeholder="Diária / Custo (R$)"
+                    className="h-10 bg-[#152031] border border-[#38bdf8]/50 focus:border-[#38bdf8] rounded-xl px-3 text-xs font-mono font-bold text-[#38bdf8] outline-hidden"
+                  />
+                </div>
+              )}
             </div>
 
             <div className="pt-2">

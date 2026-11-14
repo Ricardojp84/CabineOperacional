@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Trip, User } from '../types/cockpit';
-import { formatCurrency, formatKm } from '../utils/formatters';
+import { calculateTripFinancials, formatCurrency, formatKm } from '../utils/formatters';
 import { playCockpitClick, playSuccessChime } from '../utils/audio';
 import { generateTripPdf } from '../utils/tripPdfGenerator';
 import {
@@ -16,6 +16,7 @@ import {
   Building2,
   Calendar,
   Sparkles,
+  UserCheck,
 } from 'lucide-react';
 
 interface TripReportModalProps {
@@ -36,13 +37,11 @@ export const TripReportModal: React.FC<TripReportModalProps> = ({
 
   if (!isOpen) return null;
 
-  // Compute expenses breakdown
+  const financials = calculateTripFinancials(trip);
   const fuelExpenses = trip.expenses.filter((e) => e.category === 'combustivel' || e.category === 'arla');
-  const fuelTotal = fuelExpenses.reduce((sum, e) => sum + e.amount, 0);
-  const totalLiters = fuelExpenses.reduce((sum, e) => sum + (e.liters || 0), 0);
-
-  const tollExpenses = trip.expenses.filter((e) => e.category === 'pedagio');
-  const tollTotal = tollExpenses.reduce((sum, e) => sum + e.amount, 0);
+  const fuelTotal = financials.dieselTotal;
+  const totalLiters = financials.totalLitersFuel;
+  const tollTotal = financials.tollTotal;
 
   const foodExpenses = trip.expenses.filter((e) => e.category === 'alimentacao');
   const foodTotal = foodExpenses.reduce((sum, e) => sum + e.amount, 0);
@@ -54,17 +53,15 @@ export const TripReportModal: React.FC<TripReportModalProps> = ({
     (e) => e.category !== 'combustivel' && e.category !== 'arla' && e.category !== 'pedagio' && e.category !== 'alimentacao' && e.category !== 'manutencao' && e.category !== 'pneu_borracharia'
   );
   const otherTotal = otherExpenses.reduce((sum, e) => sum + e.amount, 0);
+  const helperCost = financials.helperCost;
 
-  const totalDirectExpenses = trip.expenses.reduce((sum, e) => sum + e.amount, 0);
-  const estimatedWearMaintenance = trip.completedDistanceKm * 0.85; // Provisão pneus e depreciação
-  const totalTripCost = totalDirectExpenses + estimatedWearMaintenance;
-
-  const netPocketProfit = trip.grossFreight - totalDirectExpenses;
-  const realNetProfit = trip.grossFreight - totalTripCost;
+  const totalDirectExpenses = financials.totalDirectExpenses;
+  const netPocketProfit = financials.netPocketProfit;
+  const realNetProfit = financials.netRealProfit;
   const netMarginPct = trip.grossFreight > 0 ? (realNetProfit / trip.grossFreight) * 100 : 0;
   const pocketMarginPct = trip.grossFreight > 0 ? (netPocketProfit / trip.grossFreight) * 100 : 0;
   const profitPerKm = trip.completedDistanceKm > 0 ? realNetProfit / trip.completedDistanceKm : 0;
-  const costPerKm = trip.completedDistanceKm > 0 ? totalDirectExpenses / trip.completedDistanceKm : 0;
+  const costPerKm = financials.costPerKm;
 
   const generateWhatsAppReport = () => {
     return `*RELATÓRIO DE FECHAMENTO DE VIAGEM - CABINE OPERACIONAL*\n` +
@@ -74,6 +71,7 @@ export const TripReportModal: React.FC<TripReportModalProps> = ({
       `📦 *Carga:* ${trip.cargo} (${trip.cargoWeightTon} Toneladas)\n` +
       `🚚 *Veículo:* ${trip.vehicleModel} | Placa: ${trip.vehiclePlate}\n` +
       `👤 *Motorista:* ${currentUser?.name || 'Não informado'}\n` +
+      `👥 *Ajudante no Frete:* ${trip.hasFreightHelper ? `Sim (${trip.freightHelperName || 'Auxiliar'} - ${formatCurrency(helperCost)})` : 'Não (Solo)'}\n` +
       `-----------------------------------------\n` +
       `💰 *RECEITAS:*\n` +
       `• *Frete Bruto:* ${formatCurrency(trip.grossFreight)}\n` +
@@ -85,6 +83,7 @@ export const TripReportModal: React.FC<TripReportModalProps> = ({
       `• *Pedágios:* ${formatCurrency(tollTotal)}\n` +
       `• *Alimentação:* ${formatCurrency(foodTotal)}\n` +
       `• *Manutenção Emergencial & Pneus:* ${formatCurrency(maintTotal)}\n` +
+      (trip.hasFreightHelper ? `• *Ajudante no Frete:* ${formatCurrency(helperCost)}\n` : '') +
       `• *Outros Gastos:* ${formatCurrency(otherTotal)}\n` +
       `• *Total Despesas Diretas:* ${formatCurrency(totalDirectExpenses)}\n\n` +
       `📊 *RESULTADO FINAL DA VIAGEM:*\n` +
@@ -282,6 +281,15 @@ export const TripReportModal: React.FC<TripReportModalProps> = ({
                 <span className="text-[#c6c6cd]">Borracharia / Manutenção</span>
                 <span className="font-mono font-bold text-[#d8e3fb]">{formatCurrency(maintTotal)}</span>
               </div>
+              {trip.hasFreightHelper && (
+                <div className="flex justify-between items-center py-1 border-b border-[#334155]/50">
+                  <span className="text-[#38bdf8] flex items-center gap-1.5">
+                    <UserCheck className="w-3.5 h-3.5" />
+                    Ajudante no Frete ({trip.freightHelperName || 'Auxiliar'})
+                  </span>
+                  <span className="font-mono font-bold text-[#38bdf8]">{formatCurrency(helperCost)}</span>
+                </div>
+              )}
               {otherTotal > 0 && (
                 <div className="flex justify-between items-center py-1 border-b border-[#334155]/50">
                   <span className="text-[#c6c6cd]">Outras Despesas (Chapa/Descarga)</span>

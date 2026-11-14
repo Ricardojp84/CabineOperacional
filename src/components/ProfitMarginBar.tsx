@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { formatCurrency } from '../utils/formatters';
-import { Fuel, Receipt, Wrench, PiggyBank, ShieldCheck } from 'lucide-react';
+import { playCockpitClick } from '../utils/audio';
+import { Fuel, Receipt, Wrench, PiggyBank, ShieldCheck, ChevronDown, ChevronUp } from 'lucide-react';
 
 interface ProfitMarginBarProps {
   grossFreight: number;
@@ -19,6 +20,7 @@ export const ProfitMarginBar: React.FC<ProfitMarginBarProps> = ({
   estimatedMaintenance,
   netProfit,
 }) => {
+  const [showDetails, setShowDetails] = useState(false);
   const safeGross = Math.max(grossFreight, 1);
 
   const dieselPct = Math.min(100, Math.max(0, (dieselTotal / safeGross) * 100));
@@ -41,17 +43,29 @@ export const ProfitMarginBar: React.FC<ProfitMarginBarProps> = ({
         <div className="flex items-center gap-2">
           <span className="text-xs text-[#94a3b8] font-medium">Margem Líquida:</span>
           <span
-            className={`font-mono text-base font-extrabold px-2.5 py-0.5 rounded-md ${
+            className={`font-mono tabular-nums text-sm sm:text-base font-extrabold px-2.5 py-0.5 rounded-md ${
               isProfitPositive ? 'bg-[#003824] text-[#10b981]' : 'bg-[#690005] text-[#ffb4ab]'
             }`}
           >
             {profitPct.toFixed(1)}% ({formatCurrency(netProfit)})
           </span>
+          <button
+            type="button"
+            onClick={() => {
+              playCockpitClick();
+              setShowDetails((prev) => !prev);
+            }}
+            aria-expanded={showDetails}
+            className="h-8 px-2.5 rounded-lg bg-[#0f172a] hover:bg-[#152031] border border-[#334155] text-xs font-bold text-[#94a3b8] hover:text-[#d8e3fb] flex items-center gap-1 cursor-pointer transition-colors whitespace-nowrap"
+          >
+            <span>{showDetails ? 'Ocultar' : 'Detalhar'}</span>
+            {showDetails ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+          </button>
         </div>
       </div>
 
       {/* Segmented Progress Bar */}
-      <div className="w-full h-5 bg-[#0f172a] rounded-lg overflow-hidden flex p-0.5 gap-0.5 border border-[#334155]">
+      <div className="w-full h-4 bg-[#0f172a] rounded-lg overflow-hidden flex p-0.5 gap-0.5 border border-[#334155]">
         {dieselPct > 0 && (
           <div
             style={{ width: `${dieselPct}%` }}
@@ -89,7 +103,8 @@ export const ProfitMarginBar: React.FC<ProfitMarginBarProps> = ({
         )}
       </div>
 
-      {/* Legend Grid */}
+      {/* Legend Grid (Expandable) */}
+      {showDetails && (
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-4 pt-3 border-t border-[#334155]/60">
         <div className="flex items-center gap-2">
           <div className="w-3 h-3 rounded-sm bg-[#f59e0b] shrink-0" />
@@ -151,6 +166,7 @@ export const ProfitMarginBar: React.FC<ProfitMarginBarProps> = ({
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 };

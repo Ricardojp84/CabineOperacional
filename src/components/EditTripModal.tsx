@@ -18,6 +18,8 @@ import {
   Gauge,
   MapPin,
   Compass,
+  UserCheck,
+  Users,
 } from 'lucide-react';
 import { calculateAdvancedRoute, TripType } from '../data/brazilCitiesDatabase';
 import { AutocompleteInput } from './AutocompleteInput';
@@ -66,6 +68,13 @@ export const EditTripModal: React.FC<EditTripModalProps> = ({
   const [currentOdometerKm, setCurrentOdometerKm] = useState(trip.currentOdometerKm || 435000);
   const [completedDistanceKm, setCompletedDistanceKm] = useState(trip.completedDistanceKm || 0);
 
+  // Freight Helper (Ajudante no Frete)
+  const [hasFreightHelper, setHasFreightHelper] = useState<boolean>(Boolean(trip.hasFreightHelper));
+  const [freightHelperName, setFreightHelperName] = useState<string>(trip.freightHelperName || '');
+  const [freightHelperCost, setFreightHelperCost] = useState<number>(
+    trip.freightHelperCost !== undefined ? trip.freightHelperCost : 180
+  );
+
   useEffect(() => {
     setOrigin(trip.origin);
     setDestination(trip.destination);
@@ -83,6 +92,9 @@ export const EditTripModal: React.FC<EditTripModalProps> = ({
     setCurrentOdometerKm(trip.currentOdometerKm || 435000);
     setCompletedDistanceKm(trip.completedDistanceKm || 0);
     setTargetConsumptionKmL(trip.targetConsumptionKmL);
+    setHasFreightHelper(Boolean(trip.hasFreightHelper));
+    setFreightHelperName(trip.freightHelperName || '');
+    setFreightHelperCost(trip.freightHelperCost !== undefined ? trip.freightHelperCost : 180);
   }, [trip]);
 
   // Automatic calculation & auto-fill of KM whenever Origin or Destination changes
@@ -140,6 +152,9 @@ export const EditTripModal: React.FC<EditTripModalProps> = ({
       currentOdometerKm,
       completedDistanceKm,
       targetConsumptionKmL: isAdmin ? targetConsumptionKmL : trip.targetConsumptionKmL,
+      hasFreightHelper,
+      freightHelperName: hasFreightHelper ? (freightHelperName.trim() || 'Ajudante de Frete') : undefined,
+      freightHelperCost: hasFreightHelper ? Math.max(0, Number(freightHelperCost) || 0) : 0,
     };
 
     onSaveTrip(updated);
@@ -592,6 +607,83 @@ export const EditTripModal: React.FC<EditTripModalProps> = ({
                 <span>Preencher KM Final Projetado</span>
               </button>
             </div>
+          </div>
+
+          {/* 3B. Ajudante no Frete (Com ou Sem Ajudante) */}
+          <div className="p-3.5 bg-[#081425] rounded-xl border border-[#334155] space-y-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs font-bold text-[#38bdf8] uppercase tracking-wide flex items-center gap-1.5">
+                <Users className="w-4 h-4 text-[#38bdf8]" />
+                Ajudante no Frete (Auxiliar de Carga/Descarga)
+              </span>
+              <span className="text-[10px] text-[#4edea3] font-mono font-bold">
+                Editável pelo Motorista
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  playCockpitClick();
+                  setHasFreightHelper(false);
+                }}
+                className={`h-10 rounded-xl text-xs font-extrabold border transition-all cursor-pointer ${
+                  !hasFreightHelper
+                    ? 'bg-[#1e293b] text-white border-[#94a3b8]'
+                    : 'bg-[#0f172a] text-[#94a3b8] border-[#334155] hover:text-white'
+                }`}
+              >
+                Sem Ajudante (Solo)
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  playCockpitClick();
+                  setHasFreightHelper(true);
+                  if (!freightHelperCost || freightHelperCost <= 0) setFreightHelperCost(180);
+                }}
+                className={`h-10 rounded-xl text-xs font-extrabold border transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                  hasFreightHelper
+                    ? 'bg-[#082f49] text-[#38bdf8] border-[#38bdf8]'
+                    : 'bg-[#0f172a] text-[#94a3b8] border-[#334155] hover:text-white'
+                }`}
+              >
+                <UserCheck className="w-3.5 h-3.5" />
+                <span>Com Ajudante no Frete</span>
+              </button>
+            </div>
+
+            {hasFreightHelper && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                <div>
+                  <label className="block text-[11px] font-bold text-[#94a3b8] uppercase mb-1">
+                    Nome do Ajudante (Opcional)
+                  </label>
+                  <input
+                    type="text"
+                    value={freightHelperName}
+                    onChange={(e) => setFreightHelperName(e.target.value)}
+                    placeholder="Ex: João Paulo (Chapa/Auxiliar)"
+                    className="w-full h-11 bg-[#152031] border border-[#334155] focus:border-[#38bdf8] rounded-xl px-3 text-[#d8e3fb] text-xs outline-hidden"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-[#ffb95f] uppercase mb-1">
+                    Custo / Diária do Ajudante (R$)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="10"
+                    value={freightHelperCost}
+                    onChange={(e) => setFreightHelperCost(Math.max(0, parseFloat(e.target.value) || 0))}
+                    className="w-full h-11 bg-[#152031] border border-[#38bdf8]/60 focus:border-[#38bdf8] rounded-xl px-3 text-[#38bdf8] font-mono font-bold text-sm outline-hidden"
+                  />
+                </div>
+              </div>
+            )}
           </div>
 
           {/* 4. Dados Financeiros (Frete Bruto e Adiantamento) - Restrito para Administradores */}

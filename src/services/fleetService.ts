@@ -1,5 +1,14 @@
-import { FleetVehicle, User, UserRole, VehicleAxles, VehicleStatus } from '../types/cockpit';
-import { getUsersFromStorage, saveUsersToStorage } from '../data/mockUsers';
+import {
+  FleetVehicle,
+  User,
+  UserRole,
+  VehicleAxles,
+  VehicleStatus,
+  DriverOperationalFunctions,
+  DEFAULT_DRIVER_FUNCTIONS,
+  isAdminRole,
+} from '../types/cockpit';
+import { getUsersFromStorage, saveUsersToStorage, saveCurrentUserSession } from '../data/mockUsers';
 import { getSupabaseClient, getStoredCredentials } from '../lib/supabase';
 import { INITIAL_DRIVER_DOCUMENTS } from './driverDocumentService';
 
@@ -195,11 +204,28 @@ export interface AdminRegisterDriverParams {
   assignedVehicleId?: string;
   contractType?: 'clt' | 'autonomo_tac' | 'agregado';
   status?: 'ativo' | 'inativo' | 'bloqueado';
+  driverFunctions?: Partial<DriverOperationalFunctions>;
+  hasFreightHelper?: boolean;
+  freightHelperName?: string;
+  freightHelperDailyCost?: number;
 }
 
 /**
+ * Sanitizes a driver role so admin privileges can NEVER be assigned through driver registration.
+ */
+export const sanitizeDriverOnlyRole = (role?: UserRole | string | null): UserRole => {
+  if (!role || isAdminRole(role)) {
+    return 'motorista';
+  }
+  if (role === 'motorista_autonomo' || role === 'motorista_agregado' || role === 'motorista') {
+    return role;
+  }
+  return 'motorista';
+};
+
+/**
  * Register a driver by Administrator with strictly driver-only permissions
- * (isSupabaseVerifiedAdmin: false, role: 'motorista').
+ * (isSupabaseVerifiedAdmin: false, role: 'motorista' | 'motorista_autonomo' | 'motorista_agregado').
  * Also syncs with Supabase if connected.
  */
 export const registerDriverByAdmin = async (
@@ -288,13 +314,21 @@ export const registerDriverByAdmin = async (
     }
   }
 
+  const safeRole = sanitizeDriverOnlyRole(params.role);
+  const resolvedDriverFunctions: DriverOperationalFunctions = {
+    ...DEFAULT_DRIVER_FUNCTIONS,
+    ...(params.driverFunctions || {}),
+  };
+  const hasHelper = Boolean(params.hasFreightHelper);
+  const helperCost = hasHelper ? Math.max(0, Number(params.freightHelperDailyCost) || 0) : 0;
+
   // Create new Driver user object - STRICTLY DRIVER ONLY
   const newDriver: User = {
     id: authUserId || `driver-${Date.now()}`,
     name: cleanName,
     email: cleanEmail,
     password: cleanPassword,
-    role: params.role || 'motorista', // strictly driver role
+    role: safeRole, // strictly driver role
     rntrc: params.rntrc || 'Isento',
     phone: params.phone || '',
     cpf: params.cpf || '',
@@ -308,6 +342,10 @@ export const registerDriverByAdmin = async (
     assignedVehicleId: params.assignedVehicleId,
     contractType: params.contractType || 'clt',
     status: params.status || 'ativo',
+    driverFunctions: resolvedDriverFunctions,
+    hasFreightHelper: hasHelper,
+    freightHelperName: hasHelper ? (params.freightHelperName?.trim() || 'Ajudante de Frete') : undefined,
+    freightHelperDailyCost: helperCost,
     isEmailVerified: true,
     isSupabaseVerifiedAdmin: false, // MANDATORY: Driver NEVER gets admin powers
     authProvider: supabaseSynced ? 'supabase' : 'local',
@@ -350,8 +388,39 @@ export const updateDriverByAdmin = async (
   }
 
   // Enforce driver-only safety (cannot promote to admin via driver update)
-  const safeUpdates = {
+  const sanitizedRole = updates.role ? sanitizeDriverOnlyRole(updates.role) : sanitizeDriverOnlyRole(users[index].role);
+  const nextHasHelper =
+    updates.hasFreightHelper !== undefined ? Boolean(updates.hasFreightHelper) : Boolean(users[index].hasFreightHelper);
+
+  let updatedTruckModel = updates.truckModel ?? users[index].truckModel;
+  let updatedTruckPlate = updates.truckPlate ?? users[index].truckPlate;
+
+  if (updates.assignedVehicleId !== undefined) {
+    if (updates.assignedVehicleId) {
+      const vehicles = getFleetVehicles();
+      const veh = vehicles.find((v) => v.id === updates.assignedVehicleId);
+      if (veh) {
+        updatedTruckModel = veh.model;
+        updatedTruckPlate = veh.plate;
+      }
+    }
+  }
+
+  const safeUpdates: Partial<User> = {
     ...updates,
+    role: sanitizedRole,
+    truckModel: updatedTruckModel,
+    truckPlate: updatedTruckPlate,
+    hasFreightHelper: nextHasHelper,
+    freightHelperName: nextHasHelper
+      ? (updates.freightHelperName ?? users[index].freightHelperName ?? 'Ajudante de Frete')
+      : undefined,
+    freightHelperDailyCost: nextHasHelper
+      ? Math.max(0, Number(updates.freightHelperDailyCost ?? users[index].freightHelperDailyCost) || 0)
+      : 0,
+    driverFunctions: updates.driverFunctions
+      ? { ...DEFAULT_DRIVER_FUNCTIONS, ...users[index].driverFunctions, ...updates.driverFunctions }
+      : users[index].driverFunctions || { ...DEFAULT_DRIVER_FUNCTIONS },
     isSupabaseVerifiedAdmin: false, // Cannot bypass admin security
   };
 
@@ -388,6 +457,112 @@ export const updateDriverByAdmin = async (
   return {
     success: true,
     user: updatedDriver,
+  };
+};
+
+/**
+ * Toggle driver's freight helper (Com Ajudante <-> Sem Ajudante) directly
+ */
+export const toggleDriverFreightHelper = (
+  driverId: string,
+  helperName?: string,
+  helperDailyCost?: number
+): { success: boolean; user?: User } => {
+  const users = getUsersFromStorage();
+  const index = users.findIndex((u) => u.id === driverId);
+  if (index === -1) return { success: false };
+
+  const current = users[index];
+  const nextHasHelper = !Boolean(current.hasFreightHelper);
+  const updated: User = {
+    ...current,
+    hasFreightHelper: nextHasHelper,
+    freightHelperName: nextHasHelper ? (helperName?.trim() || current.freightHelperName || 'Ajudante de Frete') : undefined,
+    freightHelperDailyCost: nextHasHelper
+      ? Math.max(0, Number(helperDailyCost ?? current.freightHelperDailyCost) || 180)
+      : 0,
+    isSupabaseVerifiedAdmin: false,
+  };
+
+  users[index] = updated;
+  saveUsersToStorage(users);
+  return { success: true, user: updated };
+};
+
+/**
+ * Activate/configure strictly driver-only operational functions for a driver
+ */
+export const updateDriverOnlyFunctions = (
+  driverId: string,
+  functions: DriverOperationalFunctions
+): { success: boolean; user?: User } => {
+  const users = getUsersFromStorage();
+  const index = users.findIndex((u) => u.id === driverId);
+  if (index === -1) return { success: false };
+
+  const updated: User = {
+    ...users[index],
+    role: sanitizeDriverOnlyRole(users[index].role),
+    isSupabaseVerifiedAdmin: false,
+    driverFunctions: { ...functions },
+  };
+  users[index] = updated;
+  saveUsersToStorage(users);
+  return { success: true, user: updated };
+};
+
+/**
+ * Authenticates a driver account locally (enforces blocked status & email verification, guarantees non-admin).
+ */
+export const authenticateDriverAccount = (
+  emailOrUsername: string,
+  password: string
+): { success: boolean; user?: User; error?: string; needsVerification?: boolean } => {
+  const trimmedEmail = emailOrUsername.trim().toLowerCase();
+  const trimmedPass = password.trim();
+  const usersList = getUsersFromStorage();
+
+  const found = usersList.find(
+    (u) =>
+      !isAdminRole(u.role) &&
+      (u.email.toLowerCase() === trimmedEmail || u.email.split('@')[0].toLowerCase() === trimmedEmail) &&
+      u.password === trimmedPass
+  );
+
+  if (!found) {
+    return {
+      success: false,
+      error: 'Login ou senha incorretos para a conta de motorista.',
+    };
+  }
+
+  if (found.status === 'bloqueado') {
+    return {
+      success: false,
+      error: 'Acesso bloqueado: Este cadastro de motorista foi suspenso pelo Administrador da frota.',
+    };
+  }
+
+  if (found.isEmailVerified === false) {
+    return {
+      success: false,
+      user: found,
+      needsVerification: true,
+      error: 'Seu cadastro ainda está pendente de confirmação. Acesse o link enviado para seu e-mail para ativar.',
+    };
+  }
+
+  const safeDriver: User = {
+    ...found,
+    role: sanitizeDriverOnlyRole(found.role),
+    isSupabaseVerifiedAdmin: false,
+    driverFunctions: { ...DEFAULT_DRIVER_FUNCTIONS, ...(found.driverFunctions || {}) },
+  };
+  saveCurrentUserSession(safeDriver);
+
+  return {
+    success: true,
+    user: safeDriver,
   };
 };
 

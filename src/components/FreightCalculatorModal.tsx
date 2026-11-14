@@ -25,6 +25,8 @@ import {
   RotateCw,
   ArrowRight,
   Compass,
+  UserCheck,
+  Users,
 } from 'lucide-react';
 
 interface FreightCalculatorModalProps {
@@ -34,6 +36,8 @@ interface FreightCalculatorModalProps {
   defaultCargoType?: CargoType;
   defaultDistanceKm?: number;
   defaultDieselPrice?: number;
+  defaultHasHelper?: boolean;
+  defaultHelperCost?: number;
 }
 
 export const FreightCalculatorModal: React.FC<FreightCalculatorModalProps> = ({
@@ -43,6 +47,8 @@ export const FreightCalculatorModal: React.FC<FreightCalculatorModalProps> = ({
   defaultCargoType = 'granel_solido',
   defaultDistanceKm = 1480,
   defaultDieselPrice = 6.29,
+  defaultHasHelper = false,
+  defaultHelperCost = 180,
 }) => {
   const [originCity, setOriginCity] = useState<string>('Rondonópolis - MT');
   const [destCity, setDestCity] = useState<string>('Porto de Santos - SP');
@@ -55,7 +61,16 @@ export const FreightCalculatorModal: React.FC<FreightCalculatorModalProps> = ({
   const [dieselPrice, setDieselPrice] = useState<number>(defaultDieselPrice);
   const [tollCost, setTollCost] = useState<number>(1380);
   const [maintenanceCostPerKm, setMaintenanceCostPerKm] = useState<number>(0.85);
+  const [hasHelper, setHasHelper] = useState<boolean>(Boolean(defaultHasHelper));
+  const [helperCost, setHelperCost] = useState<number>(defaultHelperCost || 180);
   const [copiedProposal, setCopiedProposal] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      setHasHelper(Boolean(defaultHasHelper));
+      setHelperCost(defaultHelperCost && defaultHelperCost > 0 ? defaultHelperCost : 180);
+    }
+  }, [isOpen, defaultHasHelper, defaultHelperCost]);
 
   // Auto-calculate road distance and tolls when cities, axles, or tripType change
   useEffect(() => {
@@ -74,7 +89,8 @@ export const FreightCalculatorModal: React.FC<FreightCalculatorModalProps> = ({
   const dieselCostTotal = fuelLitersNeeded * dieselPrice;
   const arlaCostTotal = fuelLitersNeeded * 0.05 * 2.85; // Arla is ~5% of diesel consumption
   const maintCostTotal = distanceKm * maintenanceCostPerKm;
-  const operationalCostTotal = dieselCostTotal + arlaCostTotal + tollCost + maintCostTotal;
+  const helperCostTotal = hasHelper ? Math.max(0, helperCost) : 0;
+  const operationalCostTotal = dieselCostTotal + arlaCostTotal + tollCost + maintCostTotal + helperCostTotal;
 
   const netProfit = offeredFreight - operationalCostTotal;
   const netMarginPct = offeredFreight > 0 ? (netProfit / offeredFreight) * 100 : 0;
@@ -90,11 +106,13 @@ export const FreightCalculatorModal: React.FC<FreightCalculatorModalProps> = ({
       `🚛 *Trajeto:* ${originCity} ➔ ${destCity}\n` +
       `📍 *Distância:* ${distanceKm} km\n` +
       `📦 *Carga:* ${getCargoLabel(cargoType)}\n` +
-      `⚙️ *Veículo:* ${getVehicleAxleLabel(axles)}\n\n` +
+      `⚙️ *Veículo:* ${getVehicleAxleLabel(axles)}\n` +
+      `👥 *Operação:* ${hasHelper ? `Com Ajudante (${formatCurrency(helperCostTotal)})` : 'Sem Ajudante (Motorista Solo)'}\n\n` +
       `📊 *ANÁLISE DE CUSTOS & PISO REGULATÓRIO:*\n` +
       `• *Piso Mínimo ANTT (Lei 13.703):* ${formatCurrency(anttFloor.total)}\n` +
       `• *Consumo Diesel Estimado:* ${fuelLitersNeeded.toFixed(0)} L (${formatCurrency(dieselCostTotal)})\n` +
       `• *Pedágio Previsto:* ${formatCurrency(tollCost)}\n` +
+      (hasHelper ? `• *Custo com Ajudante:* ${formatCurrency(helperCostTotal)}\n` : '') +
       `• *Custo Operacional Total:* ${formatCurrency(operationalCostTotal)}\n\n` +
       `💰 *Valor Solicitado do Frete:* ${formatCurrency(Math.max(offeredFreight, anttFloor.total))}\n` +
       `• *Valor por KM:* ${formatCurrency(Math.max(offeredFreight, anttFloor.total) / distanceKm)}/km\n` +
@@ -323,6 +341,61 @@ export const FreightCalculatorModal: React.FC<FreightCalculatorModalProps> = ({
                 onChange={(e) => setTollCost(parseFloat(e.target.value) || 0)}
                 className="w-full h-14 bg-[#081425] border border-[#334155] rounded-xl px-3 text-[#d8e3fb] font-mono font-extrabold text-base outline-hidden"
               />
+            </div>
+          </div>
+
+          {/* Freight Helper Cost Toggle */}
+          <div className="p-3 bg-[#081425] rounded-xl border border-[#334155] flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+            <div className="flex items-center gap-2">
+              <Users className="w-4 h-4 text-[#38bdf8]" />
+              <div>
+                <span className="text-xs font-bold text-[#d8e3fb] block">Tem Ajudante no Frete?</span>
+                <span className="text-[11px] text-[#94a3b8]">
+                  Soma a diária/chapa do ajudante ao custo operacional real.
+                </span>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  playCockpitClick();
+                  setHasHelper(false);
+                }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold border cursor-pointer ${
+                  !hasHelper
+                    ? 'bg-[#1e293b] text-white border-[#94a3b8]'
+                    : 'bg-[#0f172a] text-[#94a3b8] border-[#334155]'
+                }`}
+              >
+                Não (Solo)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  playCockpitClick();
+                  setHasHelper(true);
+                }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold border cursor-pointer flex items-center gap-1 ${
+                  hasHelper
+                    ? 'bg-[#082f49] text-[#38bdf8] border-[#38bdf8]'
+                    : 'bg-[#0f172a] text-[#94a3b8] border-[#334155]'
+                }`}
+              >
+                <UserCheck className="w-3.5 h-3.5" />
+                Sim
+              </button>
+              {hasHelper && (
+                <input
+                  type="number"
+                  min="0"
+                  step="10"
+                  value={helperCost}
+                  onChange={(e) => setHelperCost(Math.max(0, parseFloat(e.target.value) || 0))}
+                  className="w-24 h-9 bg-[#152031] border border-[#38bdf8]/60 rounded-lg px-2 text-xs font-mono font-bold text-[#38bdf8] outline-hidden"
+                  title="Custo do ajudante no frete (R$)"
+                />
+              )}
             </div>
           </div>
 

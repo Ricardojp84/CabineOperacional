@@ -18,6 +18,8 @@ import {
   Trash2,
   X,
   Check,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 
 interface RouteCheckpointsProps {
@@ -38,6 +40,7 @@ export const RouteCheckpoints: React.FC<RouteCheckpointsProps> = ({
   const [newCpCity, setNewCpCity] = useState('');
   const [newCpType, setNewCpType] = useState<RouteCheckpoint['type']>('posto_parada');
   const [newCpToll, setNewCpToll] = useState('');
+  const [showAllStops, setShowAllStops] = useState(false);
 
   const toggleCheckpointStatus = (id: string) => {
     playCockpitClick();
@@ -108,34 +111,64 @@ export const RouteCheckpoints: React.FC<RouteCheckpointsProps> = ({
     }
   };
 
+  const completedCount = checkpoints.filter((c) => c.status === 'completed').length;
+  const activeIdx = checkpoints.findIndex((c) => c.status === 'active');
+  const visibleCheckpoints = showAllStops
+    ? checkpoints
+    : activeIdx >= 0
+    ? checkpoints.slice(activeIdx, activeIdx + 2)
+    : checkpoints.slice(0, 2);
+
   return (
     <div className="bg-[#1e293b] border border-[#334155] rounded-xl overflow-hidden">
       {/* Header */}
-      <div className="p-4 md:p-5 flex items-center justify-between border-b border-[#334155] bg-[#152031]">
+      <div className="p-4 flex flex-wrap items-center justify-between gap-2.5 border-b border-[#334155] bg-[#152031]">
         <div>
           <h3 className="text-sm font-bold uppercase tracking-wider text-[#d8e3fb] flex items-center gap-2">
-            <Radio className="w-4 h-4 text-[#f59e0b] animate-pulse" />
-            Diário de Trechos & Roteiro Rodoviário
+            <Radio className="w-4 h-4 text-[#f59e0b]" />
+            <span>Roteiro Rodoviário</span>
+            <span className="text-xs font-mono tabular-nums font-normal text-[#94a3b8]">
+              ({completedCount}/{checkpoints.length} trechos)
+            </span>
           </h3>
           <p className="text-xs text-[#94a3b8] mt-0.5">
-            Toque em uma parada para registrar chegada ou avançar status do trecho.
+            {showAllStops
+              ? 'Toque em uma parada para avançar status.'
+              : 'Exibindo próxima(s) parada(s) prioritária(s).'}
           </p>
         </div>
-        <button
-          onClick={() => {
-            playCockpitClick();
-            setShowAddModal(true);
-          }}
-          className="h-10 px-3 bg-[#243248] hover:bg-[#2a3548] border border-[#475569] text-[#d8e3fb] rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer"
-        >
-          <Plus className="w-4 h-4 text-[#f59e0b]" />
-          Adicionar Parada
-        </button>
+        <div className="flex items-center gap-2">
+          {checkpoints.length > 2 && (
+            <button
+              type="button"
+              onClick={() => {
+                playCockpitClick();
+                setShowAllStops((prev) => !prev);
+              }}
+              aria-expanded={showAllStops}
+              className="h-9 px-3 bg-[#0f172a] hover:bg-[#1e293b] border border-[#334155] text-[#d8e3fb] rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+            >
+              <span>{showAllStops ? 'Ocultar' : `Ver Todas (${checkpoints.length})`}</span>
+              {showAllStops ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              playCockpitClick();
+              setShowAddModal(true);
+            }}
+            className="h-9 px-3 bg-[#243248] hover:bg-[#2a3548] border border-[#475569] text-[#d8e3fb] rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer whitespace-nowrap"
+          >
+            <Plus className="w-4 h-4 text-[#f59e0b]" />
+            <span>Nova Parada</span>
+          </button>
+        </div>
       </div>
 
       {/* Checkpoint Timeline List */}
       <div className="divide-y divide-[#334155]">
-        {checkpoints.map((cp, idx) => {
+        {visibleCheckpoints.map((cp, idx) => {
           const isCompleted = cp.status === 'completed';
           const isActive = cp.status === 'active';
           const isUpcoming = cp.status === 'upcoming';

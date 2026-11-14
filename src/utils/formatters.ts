@@ -1,4 +1,4 @@
-import { CargoType, VehicleAxles } from '../types/cockpit';
+import { CargoType, Trip, VehicleAxles } from '../types/cockpit';
 
 export const formatCurrency = (val: number): string => {
   return new Intl.NumberFormat('pt-BR', {
@@ -136,3 +136,60 @@ export const getVehicleAxleLabel = (axles: VehicleAxles): string => {
   };
   return map[axles] || `${axles} Eixos`;
 };
+
+export interface TripFinancialSummary {
+  dieselTotal: number;
+  totalLitersFuel: number;
+  tollTotal: number;
+  otherExpensesTotal: number;
+  helperCost: number;
+  expensesOnlyTotal: number;
+  totalDirectExpenses: number;
+  estimatedWearCost: number;
+  netPocketProfit: number;
+  netRealProfit: number;
+  costPerKm: number;
+  profitPerKm: number;
+}
+
+export const calculateTripFinancials = (trip: Trip): TripFinancialSummary => {
+  const expenses = trip.expenses || [];
+  const dieselExpenses = expenses.filter((e) => e.category === 'combustivel' || e.category === 'arla');
+  const dieselTotal = dieselExpenses.reduce((sum, e) => sum + e.amount, 0);
+  const totalLitersFuel = dieselExpenses.reduce((sum, e) => sum + (e.liters || 0), 0);
+
+  const tollExpenses = expenses.filter((e) => e.category === 'pedagio');
+  const tollTotal = tollExpenses.reduce((sum, e) => sum + e.amount, 0);
+
+  const otherExpenses = expenses.filter(
+    (e) => e.category !== 'combustivel' && e.category !== 'arla' && e.category !== 'pedagio'
+  );
+  const helperCost = trip.hasFreightHelper ? Math.max(0, Number(trip.freightHelperCost) || 0) : 0;
+  const otherExpensesTotal = otherExpenses.reduce((sum, e) => sum + e.amount, 0) + helperCost;
+
+  const expensesOnlyTotal = expenses.reduce((sum, e) => sum + e.amount, 0);
+  const totalDirectExpenses = expensesOnlyTotal + helperCost;
+  const estimatedWearCost = (trip.completedDistanceKm || 0) * 0.85;
+  const netPocketProfit = (trip.grossFreight || 0) - totalDirectExpenses;
+  const netRealProfit = (trip.grossFreight || 0) - (totalDirectExpenses + estimatedWearCost);
+
+  const completedKm = trip.completedDistanceKm || 0;
+  const costPerKm = completedKm > 0 ? totalDirectExpenses / completedKm : 0;
+  const profitPerKm = completedKm > 0 ? netPocketProfit / completedKm : 0;
+
+  return {
+    dieselTotal,
+    totalLitersFuel,
+    tollTotal,
+    otherExpensesTotal,
+    helperCost,
+    expensesOnlyTotal,
+    totalDirectExpenses,
+    estimatedWearCost,
+    netPocketProfit,
+    netRealProfit,
+    costPerKm,
+    profitPerKm,
+  };
+};
+

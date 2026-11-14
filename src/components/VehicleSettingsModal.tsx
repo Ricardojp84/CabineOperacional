@@ -25,7 +25,7 @@ export interface VehiclePreset {
   defaultConsumptionKmL?: number;
 }
 
-const TRUCK_MODELS_PRESETS: VehiclePreset[] = [
+export const TRUCK_MODELS_PRESETS: VehiclePreset[] = [
   // 2 Eixos - VUC / Utilitários / Caminhões Leves
   {
     name: 'Hyundai HR 2.5 Turbo',

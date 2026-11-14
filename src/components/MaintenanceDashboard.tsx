@@ -1,15 +1,23 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { MaintenanceItem, MaintenanceComponent, Expense, User, DriverDocumentReminder } from '../types/cockpit';
+import { MaintenanceItem, MaintenanceComponent, Expense, User, DriverDocumentReminder, TireMonitorItem } from '../types/cockpit';
 import { formatCurrency, formatOdometer } from '../utils/formatters';
 import { playCockpitClick, playSuccessChime, playAlertBeep } from '../utils/audio';
 import { generateMaintenancePdf } from '../utils/maintenancePdfGenerator';
 import { DriverDocumentSection } from './DriverDocumentSection';
+import { TireMonitorSection } from './TireMonitorSection';
+import { FuelConsumptionTrendChart } from './FuelConsumptionTrendChart';
+import { MaintenanceSavingsChart } from './MaintenanceSavingsChart';
 import {
   loadDriverDocuments,
   saveDriverDocuments,
   calculateDaysRemaining,
   getCriticalDocumentAlerts,
 } from '../services/driverDocumentService';
+import {
+  loadTires,
+  saveTires,
+  getCriticalTireAlerts,
+} from '../services/tireMonitorService';
 import {
   Wrench,
   AlertTriangle,
@@ -68,7 +76,13 @@ interface MaintenanceDashboardProps {
   currentUser?: User | null;
   driverDocuments?: DriverDocumentReminder[];
   onUpdateDriverDocuments?: (docs: DriverDocumentReminder[]) => void;
-  initialSubTab?: 'alertas' | 'documentos' | 'todos' | 'pneus' | 'oficina';
+  tires?: TireMonitorItem[];
+  onUpdateTires?: (tires: TireMonitorItem[]) => void;
+  expenses?: Expense[];
+  startOdometerKm?: number;
+  targetConsumptionKmL?: number;
+  actualConsumptionKmL?: number;
+  initialSubTab?: 'alertas' | 'vida_pneus' | 'documentos' | 'todos' | 'pneus' | 'oficina';
 }
 
 export const MaintenanceDashboard: React.FC<MaintenanceDashboardProps> = ({
@@ -82,10 +96,16 @@ export const MaintenanceDashboard: React.FC<MaintenanceDashboardProps> = ({
   currentUser,
   driverDocuments,
   onUpdateDriverDocuments,
+  tires,
+  onUpdateTires,
+  expenses = [],
+  startOdometerKm = 0,
+  targetConsumptionKmL = 2.3,
+  actualConsumptionKmL = 0,
   initialSubTab = 'alertas',
 }) => {
   // Navigation sub-tabs inside Maintenance Dashboard
-  const [subTab, setSubTab] = useState<'alertas' | 'documentos' | 'todos' | 'pneus' | 'oficina'>(
+  const [subTab, setSubTab] = useState<'alertas' | 'vida_pneus' | 'documentos' | 'todos' | 'pneus' | 'oficina'>(
     initialSubTab || 'alertas'
   );
   const [categoryFilter, setCategoryFilter] = useState<string>('todos');
@@ -112,6 +132,22 @@ export const MaintenanceDashboard: React.FC<MaintenanceDashboardProps> = ({
   const criticalDocsInAlert = useMemo(() => {
     return getCriticalDocumentAlerts(docsToUse);
   }, [docsToUse]);
+
+  // Tires lifespan monitor internal state fallback
+  const [localTires, setLocalTires] = useState<TireMonitorItem[]>(() => loadTires());
+  const tiresToUse = tires || localTires;
+
+  const handleUpdateTires = (updated: TireMonitorItem[]) => {
+    setLocalTires(updated);
+    if (onUpdateTires) {
+      onUpdateTires(updated);
+    }
+    saveTires(updated);
+  };
+
+  const criticalTiresInAlert = useMemo(() => {
+    return getCriticalTireAlerts(tiresToUse);
+  }, [tiresToUse]);
 
   // Odometer editing state
   const [odometerInput, setOdometerInput] = useState<string>(currentOdometer.toString());
@@ -586,6 +622,31 @@ export const MaintenanceDashboard: React.FC<MaintenanceDashboardProps> = ({
             <span>Plano Completo ({maintenanceItems.length})</span>
           </button>
 
+          {/* Sub-tab: Monitoramento de Vida Útil dos Pneus (>= 80% alerta) */}
+          <button
+            type="button"
+            onClick={() => {
+              playCockpitClick();
+              setSubTab('vida_pneus');
+            }}
+            className={`flex-1 min-w-[175px] h-10 rounded-lg text-xs font-extrabold transition-all cursor-pointer flex items-center justify-center gap-2 relative ${
+              subTab === 'vida_pneus'
+                ? 'bg-[#1e293b] text-[#ffb95f] border border-[#ffb95f]/60 shadow-xs'
+                : 'text-[#94a3b8] hover:text-[#d8e3fb]'
+            }`}
+          >
+            <CircleDot className={`w-4 h-4 ${criticalTiresInAlert.length > 0 ? 'text-[#f59e0b] animate-pulse' : 'text-[#38bdf8]'}`} />
+            <span>Vida Útil dos Pneus</span>
+            {criticalTiresInAlert.length > 0 && (
+              <span
+                className="text-[10px] font-black px-2 py-0.5 rounded-full bg-[#ef4444] text-white animate-pulse"
+                title="Pneus que atingiram 80% ou mais do desgaste estimado"
+              >
+                {criticalTiresInAlert.length} ≥80%
+              </span>
+            )}
+          </button>
+
           <button
             type="button"
             onClick={() => {
@@ -618,6 +679,27 @@ export const MaintenanceDashboard: React.FC<MaintenanceDashboardProps> = ({
             <span>Consertos Gerais & Oficina</span>
           </button>
         </div>
+      </div>
+
+      {/* GRÁFICOS ANALÍTICOS: CONSUMO HISTÓRICO E PREVENTIVA VS ECONOMIA EM RODOVIA */}
+      <div className="px-4 md:px-5 pt-4 grid grid-cols-1 xl:grid-cols-2 gap-4 items-stretch">
+        <FuelConsumptionTrendChart
+          expenses={expenses}
+          startOdometerKm={startOdometerKm}
+          targetConsumptionKmL={targetConsumptionKmL}
+          actualConsumptionKmL={actualConsumptionKmL}
+          vehicleModel={vehicleModel}
+        />
+
+        <MaintenanceSavingsChart
+          maintenanceItems={maintenanceItems}
+          currentOdometer={currentOdometer}
+          expenses={expenses}
+          onAddNewItem={() => {
+            playCockpitClick();
+            setShowAddModal(true);
+          }}
+        />
       </div>
 
       {/* VIEW 1: ABA DE ALERTAS DE MANUTENÇÃO EM DESTAQUE */}
@@ -795,6 +877,52 @@ export const MaintenanceDashboard: React.FC<MaintenanceDashboardProps> = ({
                   className="h-9 px-3.5 rounded-xl bg-[#f59e0b] hover:bg-[#d97706] text-[#0f172a] text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-md shadow-amber-500/20 active:scale-95 shrink-0"
                 >
                   <span>Regularizar Documentação</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Alerta de Vida Útil de Pneus >= 80% na aba Alertas */}
+          {criticalTiresInAlert.length > 0 && (
+            <div className="p-4 rounded-2xl bg-gradient-to-r from-[#450a0a] via-[#422006] to-[#1e1b4b] border-2 border-[#f59e0b] shadow-xl text-white space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  <div className="p-2.5 rounded-xl bg-[#472a00] border border-[#f59e0b] text-[#ffb95f] shrink-0 mt-0.5">
+                    <CircleDot className="w-6 h-6 text-[#ffb95f] animate-pulse" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h4 className="text-sm sm:text-base font-black text-[#fef3c7] uppercase">
+                        🛞 ALERTA DE PNEUS: {criticalTiresInAlert.length} Pneu(s) Atingiram ≥ 80% de Desgaste
+                      </h4>
+                      <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-[#f59e0b] text-[#0f172a]">
+                        Monitor de Vida Útil
+                      </span>
+                    </div>
+                    <p className="text-xs text-[#fed7aa] mt-1">
+                      {criticalTiresInAlert
+                        .map(
+                          ({ tire, analysis }) =>
+                            `${tire.position}: ${analysis.wearPct.toFixed(1)}% (${
+                              analysis.remainingKm <= 0
+                                ? `excedido ${formatOdometer(Math.abs(analysis.remainingKm))}`
+                                : `restam ${formatOdometer(analysis.remainingKm)}`
+                            })`
+                        )
+                        .join(' • ')}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    playCockpitClick();
+                    setSubTab('vida_pneus');
+                  }}
+                  className="h-9 px-3.5 rounded-xl bg-[#f59e0b] hover:bg-[#d97706] text-[#0f172a] text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-md shadow-amber-500/20 active:scale-95 shrink-0"
+                >
+                  <span>Gerenciar Vida Útil dos Pneus</span>
                   <ArrowRight className="w-4 h-4" />
                 </button>
               </div>
@@ -1009,7 +1137,7 @@ export const MaintenanceDashboard: React.FC<MaintenanceDashboardProps> = ({
       )}
 
       {/* VIEW 2, 3, 4: LISTAGEM DE ITENS COM FILTRO DE CATEGORIAS */}
-      {subTab !== 'alertas' && subTab !== 'documentos' && (
+      {subTab !== 'alertas' && subTab !== 'documentos' && subTab !== 'vida_pneus' && (
         <div>
           {/* Quick Filter Bar for 'todos' subtab */}
           {subTab === 'todos' && (
@@ -1150,6 +1278,18 @@ export const MaintenanceDashboard: React.FC<MaintenanceDashboardProps> = ({
             currentUser={currentUser}
           />
         </div>
+      )}
+
+      {/* VIEW: ABA DE MONITORAMENTO DE VIDA ÚTIL DE PNEUS */}
+      {subTab === 'vida_pneus' && (
+        <TireMonitorSection
+          tires={tiresToUse}
+          onUpdateTires={handleUpdateTires}
+          currentOdometer={currentOdometer}
+          vehicleModel={vehicleModel}
+          vehiclePlate={vehiclePlate}
+          onAddExpense={onAddExpense}
+        />
       )}
 
       {/* MODAL: CADASTRAR NOVO ITEM DE MANUTENÇÃO */}

@@ -1,9 +1,21 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Trip, Expense, RouteCheckpoint, MaintenanceItem, User, isAdminRole, isUserAdmin, DriverDocumentReminder } from './types/cockpit';
+import {
+  Trip,
+  Expense,
+  RouteCheckpoint,
+  MaintenanceItem,
+  User,
+  DriverOperationalFunctions,
+  hasDriverFunction,
+  isUserAdmin,
+  DriverDocumentReminder,
+  TireMonitorItem,
+  PreTripInspection,
+} from './types/cockpit';
 import { PRESET_TRIPS, INITIAL_MAINTENANCE_ITEMS } from './data/mockRoutes';
 import { INITIAL_USERS, getCurrentUserSession, saveCurrentUserSession, verifyUserByToken } from './data/mockUsers';
-import { formatCurrency, formatKm, formatOdometer } from './utils/formatters';
-import { playCockpitClick, playSuccessChime } from './utils/audio';
+import { calculateTripFinancials, formatCurrency, formatKm, formatOdometer, formatShortHours, formatTimeSeconds } from './utils/formatters';
+import { playCockpitClick, playSuccessChime, playAlertBeep } from './utils/audio';
 import { verifyActiveAdminSession } from './services/supabaseAuthService';
 import {
   loadDriverDocuments,
@@ -11,19 +23,26 @@ import {
   getCriticalDocumentAlerts,
   formatBrazilianDate,
 } from './services/driverDocumentService';
+import {
+  loadTires,
+  saveTires,
+  getCriticalTireAlerts,
+} from './services/tireMonitorService';
 
 // Components
 import { HeaderCockpit } from './components/HeaderCockpit';
 import { KpiCard } from './components/KpiCard';
 import { ProfitMarginBar } from './components/ProfitMarginBar';
 import { RouteCheckpoints } from './components/RouteCheckpoints';
+import { PreTripChecklist } from './components/PreTripChecklist';
+import { RouteWeatherWidget } from './components/RouteWeatherWidget';
 import { QuickFuelModal } from './components/QuickFuelModal';
 import { ExpenseModal } from './components/ExpenseModal';
 import { EditExpenseModal } from './components/EditExpenseModal';
 import { EditTripModal } from './components/EditTripModal';
 import { AuthModal } from './components/AuthModal';
 import { FreightCalculatorModal } from './components/FreightCalculatorModal';
-import { DriverShiftTimer } from './components/DriverShiftTimer';
+import { DriverShiftTimer, useDriverShiftController } from './components/DriverShiftTimer';
 import { MaintenanceDashboard } from './components/MaintenanceDashboard';
 import { TripReportModal } from './components/TripReportModal';
 import { NewTripModal } from './components/NewTripModal';
@@ -36,6 +55,7 @@ import { AnnualProfitReportModal } from './components/AnnualProfitReportModal';
 import { ResetDataModal } from './components/ResetDataModal';
 import { VehicleSettingsModal } from './components/VehicleSettingsModal';
 import { FleetManagementModal } from './components/FleetManagementModal';
+import { ProductivityReportModal } from './components/ProductivityReportModal';
 import { setupBackgroundMaintenanceWatcher } from './services/maintenanceNotificationService';
 
 // Icons
@@ -71,6 +91,14 @@ import {
   Info,
   AlertTriangle,
   Users,
+  CircleDot,
+  UserCheck,
+  Lock,
+  Coffee,
+  BellRing,
+  Settings2,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 
 export default function App() {
@@ -138,15 +166,25 @@ export default function App() {
   const [isResetDataModalOpen, setIsResetDataModalOpen] = useState(false);
   const [isVehicleModalOpen, setIsVehicleModalOpen] = useState(false);
   const [isFleetModalOpen, setIsFleetModalOpen] = useState(false);
+  const [isProductivityReportOpen, setIsProductivityReportOpen] = useState(false);
   const [emailVerificationNotice, setEmailVerificationNotice] = useState<string | null>(null);
+  const [driverNotice, setDriverNotice] = useState<string | null>(null);
+  const [showHeroDetails, setShowHeroDetails] = useState<boolean>(false);
 
   // Driver Documentation Reminders state (CNH, EAR, Exames Toxicológicos)
   const [driverDocuments, setDriverDocuments] = useState<DriverDocumentReminder[]>(() => {
     return loadDriverDocuments();
   });
+  // Tire Lifespan Monitoring state (>= 80% wear alerts)
+  const [tires, setTires] = useState<TireMonitorItem[]>(() => {
+    return loadTires();
+  });
   const [maintenanceInitialSubTab, setMaintenanceInitialSubTab] = useState<
-    'alertas' | 'documentos' | 'todos' | 'pneus' | 'oficina'
+    'alertas' | 'vida_pneus' | 'documentos' | 'todos' | 'pneus' | 'oficina'
   >('alertas');
+
+  // Synchronized Driver Shift Timer & Custom Break Reminder Controller (runs across all Cockpit tabs)
+  const shiftController = useDriverShiftController();
 
   // Check URL parameters for email verification link
   useEffect(() => {
@@ -223,6 +261,14 @@ export default function App() {
     }
   }, [driverDocuments]);
 
+  useEffect(() => {
+    try {
+      saveTires(tires);
+    } catch {
+      // Ignore
+    }
+  }, [tires]);
+
   // Web API Background & Locked-Screen Maintenance Notification Watcher
   useEffect(() => {
     const cleanup = setupBackgroundMaintenanceWatcher({
@@ -241,26 +287,20 @@ export default function App() {
     return cleanup;
   }, [activeTrip.currentOdometerKm, activeTrip.vehiclePlate, activeTrip.vehicleModel, maintenanceItems]);
 
-  // Derived financial metrics
-  const dieselExpenses = activeTrip.expenses.filter((e) => e.category === 'combustivel' || e.category === 'arla');
-  const dieselTotal = dieselExpenses.reduce((sum, e) => sum + e.amount, 0);
-  const totalLitersFuel = dieselExpenses.reduce((sum, e) => sum + (e.liters || 0), 0);
-
-  const tollExpenses = activeTrip.expenses.filter((e) => e.category === 'pedagio');
-  const tollTotal = tollExpenses.reduce((sum, e) => sum + e.amount, 0);
-
-  const otherExpenses = activeTrip.expenses.filter(
-    (e) => e.category !== 'combustivel' && e.category !== 'arla' && e.category !== 'pedagio'
-  );
-  const otherExpensesTotal = otherExpenses.reduce((sum, e) => sum + e.amount, 0);
-
-  const totalDirectExpenses = activeTrip.expenses.reduce((sum, e) => sum + e.amount, 0);
-  const estimatedWearCost = activeTrip.completedDistanceKm * 0.85; // Provisão pneus e depreciação
-  const netPocketProfit = activeTrip.grossFreight - totalDirectExpenses;
-  const netRealProfit = activeTrip.grossFreight - (totalDirectExpenses + estimatedWearCost);
-
-  const costPerKm = activeTrip.completedDistanceKm > 0 ? totalDirectExpenses / activeTrip.completedDistanceKm : 0;
-  const profitPerKm = activeTrip.completedDistanceKm > 0 ? netPocketProfit / activeTrip.completedDistanceKm : 0;
+  // Derived financial metrics (including Freight Helper cost when enabled)
+  const {
+    dieselTotal,
+    totalLitersFuel,
+    tollTotal,
+    otherExpensesTotal,
+    helperCost,
+    totalDirectExpenses,
+    estimatedWearCost,
+    netPocketProfit,
+    netRealProfit,
+    costPerKm,
+    profitPerKm,
+  } = useMemo(() => calculateTripFinancials(activeTrip), [activeTrip]);
 
   // Count maintenance items that are overdue or nearing threshold (<= 3000 km)
   const maintenanceAlertCount = maintenanceItems.filter(
@@ -271,6 +311,11 @@ export default function App() {
   const criticalDocAlerts = useMemo(() => {
     return getCriticalDocumentAlerts(driverDocuments);
   }, [driverDocuments]);
+
+  // Critical tire wear alerts (>= 80% estimated wear)
+  const criticalTireAlerts = useMemo(() => {
+    return getCriticalTireAlerts(tires);
+  }, [tires]);
 
   // Alerta de Consumo: Média real está 20% ou mais abaixo da meta definida para o modelo
   const isConsumptionAlert = useMemo(() => {
@@ -288,16 +333,77 @@ export default function App() {
     return Math.max(0, Math.round((diff / activeTrip.targetConsumptionKmL) * 100));
   }, [isConsumptionAlert, activeTrip.targetConsumptionKmL, activeTrip.actualConsumptionKmL]);
 
+  const showCockpitNotice = (msg: string) => {
+    setDriverNotice(msg);
+    setTimeout(() => {
+      setDriverNotice((curr) => (curr === msg ? null : curr));
+    }, 5500);
+  };
+
+  const canRouteMaps = hasDriverFunction(currentUser, 'routeAndMaps');
+  const canFuelExpenses = hasDriverFunction(currentUser, 'fuelAndExpenses');
+  const canTachograph = hasDriverFunction(currentUser, 'tachographAndShift');
+  const canMaintenanceChecklist = hasDriverFunction(currentUser, 'maintenanceAndChecklist');
+  const canWeatherProductivity = hasDriverFunction(currentUser, 'weatherAndProductivity');
+  const canFreightSim = hasDriverFunction(currentUser, 'freightSimulator');
+
+  const guardedRun = (
+    fnKey: keyof DriverOperationalFunctions,
+    action: () => void,
+    featureLabel: string
+  ) => {
+    if (!hasDriverFunction(currentUser, fnKey)) {
+      playAlertBeep();
+      showCockpitNotice(
+        `Função "${featureLabel}" está desativada pelo Administrador para este motorista.`
+      );
+      return;
+    }
+    action();
+  };
+
+  const handleToggleTripFreightHelper = () => {
+    playCockpitClick();
+    setActiveTrip((prev) => {
+      const nextHasHelper = !Boolean(prev.hasFreightHelper);
+      const nextCost = nextHasHelper
+        ? prev.freightHelperCost && prev.freightHelperCost > 0
+          ? prev.freightHelperCost
+          : currentUser?.freightHelperDailyCost || 180
+        : 0;
+      const nextName = nextHasHelper
+        ? prev.freightHelperName || currentUser?.freightHelperName || 'Ajudante de Frete'
+        : undefined;
+      showCockpitNotice(
+        nextHasHelper
+          ? `Frete configurado COM AJUDANTE (${nextName} · ${formatCurrency(nextCost)}).`
+          : 'Frete configurado SEM AJUDANTE (Operação Solo).'
+      );
+      return {
+        ...prev,
+        hasFreightHelper: nextHasHelper,
+        freightHelperName: nextName,
+        freightHelperCost: nextCost,
+      };
+    });
+  };
+
   // Authentication Handlers
   const handleLoginSuccess = (user: User) => {
     setCurrentUser(user);
-    if (user.truckModel && user.truckPlate) {
-      setActiveTrip((prev) => ({
-        ...prev,
-        vehicleModel: user.truckModel,
-        vehiclePlate: user.truckPlate,
-      }));
-    }
+    setActiveTrip((prev) => ({
+      ...prev,
+      vehicleModel: user.truckModel || prev.vehicleModel,
+      vehiclePlate: user.truckPlate || prev.vehiclePlate,
+      hasFreightHelper:
+        user.hasFreightHelper !== undefined ? Boolean(user.hasFreightHelper) : prev.hasFreightHelper,
+      freightHelperName: user.hasFreightHelper
+        ? user.freightHelperName || prev.freightHelperName || 'Ajudante de Frete'
+        : undefined,
+      freightHelperCost: user.hasFreightHelper
+        ? user.freightHelperDailyCost || prev.freightHelperCost || 180
+        : 0,
+    }));
   };
 
   const handleLogout = () => {
@@ -382,6 +488,14 @@ export default function App() {
     });
   };
 
+  // Pre-trip safety inspection linked to active trip
+  const handleSavePreTripInspection = (inspection: PreTripInspection) => {
+    setActiveTrip((prev) => ({
+      ...prev,
+      preTripInspection: inspection,
+    }));
+  };
+
   // Switch or Create Trip
   const handleSelectTrip = (trip: Trip) => {
     setActiveTrip(trip);
@@ -448,11 +562,17 @@ export default function App() {
 
   // Quick launch Google Maps navigation
   const handleQuickLaunchGoogleMaps = () => {
-    playCockpitClick();
-    const encodedOrigin = encodeURIComponent(activeTrip.origin.trim() + ', Brasil');
-    const encodedDest = encodeURIComponent(activeTrip.destination.trim() + ', Brasil');
-    const mapsUrl = `https://www.google.com/maps/dir/?api=1&origin=${encodedOrigin}&destination=${encodedDest}&travelmode=driving`;
-    window.open(mapsUrl, '_blank', 'noopener,noreferrer');
+    guardedRun(
+      'routeAndMaps',
+      () => {
+        playCockpitClick();
+        const encodedOrigin = encodeURIComponent(activeTrip.origin.trim() + ', Brasil');
+        const encodedDest = encodeURIComponent(activeTrip.destination.trim() + ', Brasil');
+        const mapsUrl = `https://www.google.com/maps/dir/?api=1&origin=${encodedOrigin}&destination=${encodedDest}&travelmode=driving`;
+        window.open(mapsUrl, '_blank', 'noopener,noreferrer');
+      },
+      'Rotas, GPS & Google Maps'
+    );
   };
 
   // Filtered expenses
@@ -515,26 +635,46 @@ export default function App() {
         </div>
       )}
 
+      {/* Operational Command & Permission Notice Banner */}
+      {driverNotice && (
+        <div className="bg-[#0f172a] border-b border-[#38bdf8]/60 text-[#bae6fd] px-4 py-2.5 text-xs md:text-sm font-bold flex items-center justify-between sticky top-0 z-50 shadow-md">
+          <div className="flex items-center gap-2">
+            <Info className="w-4 h-4 text-[#38bdf8] shrink-0" />
+            <span>{driverNotice}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setDriverNotice(null)}
+            className="p-1 rounded-md text-[#94a3b8] hover:text-white cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* Cockpit Top Header */}
       <HeaderCockpit
         trip={activeTrip}
         currentUser={currentUser}
         isNightMode={isNightMode}
         onToggleNightMode={() => setIsNightMode(!isNightMode)}
-        onOpenTripModal={() => setIsTripModalOpen(true)}
+        onOpenTripModal={() => guardedRun('routeAndMaps', () => setIsTripModalOpen(true), 'Rotas & Viagens')}
         onOpenEditTripModal={() => setIsEditTripOpen(true)}
-        onOpenCalculator={() => setIsCalculatorOpen(true)}
+        onOpenCalculator={() => guardedRun('freightSimulator', () => setIsCalculatorOpen(true), 'Simulador ANTT')}
         onOpenReport={() => setIsReportOpen(true)}
         onOpenAuth={() => setIsAuthModalOpen(true)}
         onLogout={handleLogout}
-        onOpenGpsModal={() => setIsGpsModalOpen(true)}
-        onOpenMapsModal={() => setIsMapsModalOpen(true)}
+        onOpenGpsModal={() => guardedRun('routeAndMaps', () => setIsGpsModalOpen(true), 'GPS Vivo')}
+        onOpenMapsModal={() => guardedRun('routeAndMaps', () => setIsMapsModalOpen(true), 'Google Maps & Pedágios')}
         onOpenBackupModal={() => setIsBackupModalOpen(true)}
         onOpenSupabaseModal={() => setIsSupabaseModalOpen(true)}
         onOpenAnnualReport={() => setIsAnnualReportOpen(true)}
         onOpenVehicleSettings={() => setIsVehicleModalOpen(true)}
         onOpenResetData={() => setIsResetDataModalOpen(true)}
         onOpenFleetManagement={() => setIsFleetModalOpen(true)}
+        onOpenProductivityReport={() =>
+          guardedRun('weatherAndProductivity', () => setIsProductivityReportOpen(true), 'Produtividade km/L')
+        }
       />
 
       {/* Main Container */}
@@ -544,8 +684,8 @@ export default function App() {
           <div className="absolute right-0 top-0 bottom-0 w-1/3 bg-radial from-amber-500/10 to-transparent pointer-events-none" />
 
           {/* Tier 1: Status & Context Header */}
-          <div className="relative z-10 space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2.5 pb-2.5 border-b border-[#334155]/50">
+          <div className="relative z-10 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-[#334155]/50">
               <div className="flex flex-wrap items-center gap-2">
                 <span
                   className={`text-[11px] font-extrabold px-2.5 py-1 rounded-md uppercase tracking-wider ${
@@ -557,24 +697,24 @@ export default function App() {
                   {activeTrip.isCompleted ? 'Viagem Concluída' : 'Viagem em Andamento'}
                 </span>
 
+                {/* Freight Helper Toggle Chip (Com Ajudante / Sem Ajudante Solo) */}
                 <button
                   type="button"
-                  onClick={() => {
-                    playCockpitClick();
-                    setIsGpsModalOpen(true);
-                  }}
-                  className="text-xs text-[#4edea3] hover:text-[#6ffbbe] font-mono flex items-center gap-1.5 bg-[#081425] px-2.5 py-1 rounded-md border border-[#009365]/30 cursor-pointer transition-colors"
-                  title="Ver sinal GPS em tempo real"
+                  onClick={handleToggleTripFreightHelper}
+                  className={`text-[11px] font-bold px-2.5 py-1 rounded-md border flex items-center gap-1.5 cursor-pointer transition-colors ${
+                    activeTrip.hasFreightHelper
+                      ? 'bg-[#082f49] hover:bg-[#0c4a6e] text-[#38bdf8] border-[#38bdf8]/50'
+                      : 'bg-[#081425] hover:bg-[#1e293b] text-[#94a3b8] border-[#334155]'
+                  }`}
+                  title="Clique para alternar se este frete conta com ajudante ou é operação solo"
                 >
-                  <Satellite className="w-3.5 h-3.5 text-[#10b981] animate-pulse" />
-                  <span>GPS do Aparelho Ativo</span>
-                </button>
-
-                {currentUser && (
-                  <span className="text-[11px] text-[#bec6e0] font-semibold bg-[#081425] px-2.5 py-1 rounded-md border border-[#334155]">
-                    Condutor: <strong className="text-[#ffb95f]">{currentUser.name}</strong>
+                  <UserCheck className="w-3.5 h-3.5" />
+                  <span>
+                    {activeTrip.hasFreightHelper
+                      ? `Com Ajudante (${formatCurrency(helperCost)})`
+                      : 'Sem Ajudante (Solo)'}
                   </span>
-                )}
+                </button>
 
                 {/* Alerta de Documentação do Condutor no crachá */}
                 {criticalDocAlerts.length > 0 && (
@@ -585,11 +725,28 @@ export default function App() {
                       setMaintenanceInitialSubTab('documentos');
                       setActiveTab('manutencao');
                     }}
-                    className="text-[11px] font-black px-2.5 py-1 rounded-md bg-[#450a0a] hover:bg-[#690005] border border-[#ef4444] text-[#fca5a5] flex items-center gap-1.5 cursor-pointer animate-pulse transition-all shadow-sm"
+                    className="text-[11px] font-black px-2.5 py-1 rounded-md bg-[#450a0a] hover:bg-[#690005] border border-[#ef4444] text-[#fca5a5] flex items-center gap-1.5 cursor-pointer transition-all shadow-sm"
                     title="Atenção: Exame toxicológico ou CNH com vencimento pendente"
                   >
                     <ShieldAlert className="w-3.5 h-3.5 text-[#ef4444]" />
                     <span>Doc. Pendente ({criticalDocAlerts.length})</span>
+                  </button>
+                )}
+
+                {/* Alerta de Vida Útil de Pneus (>= 80% desgaste) no crachá */}
+                {criticalTireAlerts.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      playCockpitClick();
+                      setMaintenanceInitialSubTab('vida_pneus');
+                      setActiveTab('manutencao');
+                    }}
+                    className="text-[11px] font-black px-2.5 py-1 rounded-md bg-[#472a00] hover:bg-[#5c3700] border border-[#f59e0b] text-[#ffb95f] flex items-center gap-1.5 cursor-pointer transition-all shadow-sm"
+                    title="Atenção: Pneu(s) atingiram 80% ou mais do desgaste estimado"
+                  >
+                    <CircleDot className="w-3.5 h-3.5 text-[#f59e0b]" />
+                    <span>Pneus ≥80% ({criticalTireAlerts.length})</span>
                   </button>
                 )}
 
@@ -601,7 +758,7 @@ export default function App() {
                       playCockpitClick();
                       setIsVehicleModalOpen(true);
                     }}
-                    className="text-[11px] font-black px-2.5 py-1 rounded-md bg-[#450a0a] hover:bg-[#690005] border border-[#ef4444] text-[#fca5a5] flex items-center gap-1.5 cursor-pointer animate-pulse transition-all shadow-sm"
+                    className="text-[11px] font-black px-2.5 py-1 rounded-md bg-[#450a0a] hover:bg-[#690005] border border-[#ef4444] text-[#fca5a5] flex items-center gap-1.5 cursor-pointer transition-all shadow-sm"
                     title={`Atenção: Consumo real ${activeTrip.actualConsumptionKmL.toFixed(2)} km/L está ${consumptionShortfallPct}% abaixo da meta (${activeTrip.targetConsumptionKmL.toFixed(2)} km/L)`}
                   >
                     <Fuel className="w-3.5 h-3.5 text-[#ef4444]" />
@@ -610,252 +767,194 @@ export default function App() {
                 )}
               </div>
 
-              {/* Truck Chip / Alterar Caminhão */}
-              <button
-                type="button"
-                onClick={() => {
-                  playCockpitClick();
-                  setIsVehicleModalOpen(true);
-                }}
-                className="text-xs text-[#ffb95f] hover:text-white bg-[#081425] hover:bg-[#1e293b] px-3 py-1.5 rounded-md border border-[#f59e0b]/40 flex items-center gap-2 cursor-pointer transition-all shadow-sm"
-                title="Clique para alterar modelo do caminhão, placa ou eixos"
-              >
-                <Truck className="w-3.5 h-3.5 text-[#f59e0b]" />
-                <span className="font-extrabold">{activeTrip.vehicleModel || 'Veículo'}</span>
-                <span className="text-[11px] text-[#94a3b8] font-mono">({activeTrip.vehiclePlate || 'S/ Placa'})</span>
-                <span className="text-[10px] bg-[#f59e0b]/20 text-[#ffb95f] px-1.5 py-0.5 rounded font-bold">
-                  {activeTrip.axles || 2} Eixos
-                </span>
-                <Edit className="w-3 h-3 text-[#94a3b8]" />
-              </button>
+              {/* Compact Controls */}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    playCockpitClick();
+                    setShowHeroDetails((prev) => !prev);
+                  }}
+                  aria-expanded={showHeroDetails}
+                  className="h-8 px-2.5 rounded-lg bg-[#081425] hover:bg-[#1e293b] border border-[#334155] text-[11px] font-bold text-[#94a3b8] hover:text-[#d8e3fb] flex items-center gap-1 cursor-pointer transition-colors whitespace-nowrap"
+                >
+                  <span>{showHeroDetails ? 'Ocultar Opções' : 'Mais Opções'}</span>
+                  {showHeroDetails ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    playCockpitClick();
+                    setIsEditTripOpen(true);
+                  }}
+                  className="h-8 px-3 rounded-lg bg-amber-500 hover:bg-amber-600 text-[#081425] text-[11px] font-black flex items-center gap-1.5 cursor-pointer transition-colors whitespace-nowrap"
+                >
+                  <Edit className="w-3.5 h-3.5" />
+                  <span>Configurar Rota</span>
+                </button>
+              </div>
             </div>
 
-            {/* Tier 2: Route Display Board (Full Width Isolated Box with Responsive Node Cards) */}
-            <div className="w-full bg-[#081425]/90 border border-[#334155]/90 rounded-2xl p-4 sm:p-5 shadow-inner">
-              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                {/* Route Path Indicator: Origin -> Connector -> Destination */}
-                <div className="flex-1 min-w-0">
-                  <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_1fr] items-center gap-2 sm:gap-3">
-                    {/* Origin Node Card */}
-                    <div className="p-3 rounded-xl bg-[#0f172a] border border-[#10b981]/40 flex items-center gap-3 min-w-0 shadow-sm">
-                      <div className="w-10 h-10 rounded-xl bg-[#003824] border border-[#10b981] flex items-center justify-center text-[#10b981] shrink-0">
-                        <MapPin className="w-5 h-5" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <span className="text-[10px] font-mono uppercase tracking-wider text-[#94a3b8] block font-bold">
-                          Ponto de Origem
-                        </span>
-                        <div
-                          className="text-sm sm:text-base font-extrabold text-white truncate"
-                          title={activeTrip.origin || 'Origem a definir'}
-                        >
-                          {activeTrip.origin || 'Origem a definir'}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Route Connector with Distance Badge */}
-                    <div className="flex sm:flex-col items-center justify-center gap-1.5 py-1 sm:py-0 px-2 text-center shrink-0">
-                      <ChevronRight className="w-5 h-5 text-[#f59e0b] hidden sm:block" />
-                      {activeTrip.totalDistanceKm > 0 ? (
-                        <span className="text-[11px] font-mono font-black px-2.5 py-0.5 rounded-full bg-[#f59e0b]/20 text-[#ffb95f] border border-[#f59e0b]/40 whitespace-nowrap shadow-xs">
-                          {formatKm(activeTrip.totalDistanceKm)}
-                        </span>
-                      ) : (
-                        <span className="text-[10px] font-mono font-bold text-[#94a3b8] bg-[#1e293b] px-2 py-0.5 rounded border border-[#334155]">
-                          0 km
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Destination Node Card */}
-                    <div className="p-3 rounded-xl bg-[#0f172a] border border-[#f59e0b]/40 flex items-center gap-3 min-w-0 shadow-sm">
-                      <div className="w-10 h-10 rounded-xl bg-[#472a00] border border-[#f59e0b] flex items-center justify-center text-[#ffb95f] shrink-0">
-                        <MapPin className="w-5 h-5" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <span className="text-[10px] font-mono uppercase tracking-wider text-[#94a3b8] block font-bold">
-                          Ponto de Destino
-                        </span>
-                        <div
-                          className="text-sm sm:text-base font-extrabold text-[#ffb95f] truncate"
-                          title={activeTrip.destination || 'Destino a definir'}
-                        >
-                          {activeTrip.destination || 'Destino a definir'}
-                        </div>
-                      </div>
+            {/* Tier 2: Clean Route Display Board */}
+            <div className="w-full bg-[#081425]/90 border border-[#334155]/90 rounded-2xl p-3.5 sm:p-4 shadow-inner">
+              <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_1fr] items-center gap-2 sm:gap-3">
+                <div className="p-3 rounded-xl bg-[#0f172a] border border-[#10b981]/40 flex items-center gap-3 min-w-0 shadow-sm">
+                  <div className="w-9 h-9 rounded-xl bg-[#003824] border border-[#10b981] flex items-center justify-center text-[#10b981] shrink-0">
+                    <MapPin className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <span className="text-[10px] font-mono uppercase tracking-wider text-[#94a3b8] block font-bold">
+                      Origem
+                    </span>
+                    <div
+                      className="text-sm sm:text-base font-extrabold text-white truncate"
+                      title={activeTrip.origin || 'Origem a definir'}
+                    >
+                      {activeTrip.origin || 'Origem a definir'}
                     </div>
                   </div>
+                </div>
 
-                  {/* Route Metadata Chips (Road, Cargo, Gross Freight, Tolls) */}
-                  <div className="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t border-[#334155]/50 text-xs">
-                    <span className="font-semibold text-[#bec6e0] flex items-center gap-1.5 bg-[#152031] px-2.5 py-1 rounded-lg border border-[#334155]">
-                      <Truck className="w-3.5 h-3.5 text-[#ffb95f]" />
-                      {activeTrip.routeHighlights || 'Rota rodoviária'}
+                <div className="flex sm:flex-col items-center justify-center gap-1 py-1 sm:py-0 px-2 text-center shrink-0">
+                  <ChevronRight className="w-5 h-5 text-[#f59e0b] hidden sm:block" />
+                  <span className="text-[11px] font-mono tabular-nums font-black px-2.5 py-0.5 rounded bg-[#f59e0b]/20 text-[#ffb95f] border border-[#f59e0b]/40 whitespace-nowrap">
+                    {activeTrip.totalDistanceKm > 0 ? formatKm(activeTrip.totalDistanceKm) : '0 km'}
+                  </span>
+                </div>
+
+                <div className="p-3 rounded-xl bg-[#0f172a] border border-[#f59e0b]/40 flex items-center gap-3 min-w-0 shadow-sm">
+                  <div className="w-9 h-9 rounded-xl bg-[#472a00] border border-[#f59e0b] flex items-center justify-center text-[#ffb95f] shrink-0">
+                    <MapPin className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <span className="text-[10px] font-mono uppercase tracking-wider text-[#94a3b8] block font-bold">
+                      Destino
                     </span>
-                    <span className="font-bold text-[#4edea3] bg-[#003824]/60 px-2.5 py-1 rounded-lg border border-[#10b981]/30">
-                      {activeTrip.cargo || 'Carga geral'} ({activeTrip.cargoWeightTon || 0} Ton)
+                    <div
+                      className="text-sm sm:text-base font-extrabold text-[#ffb95f] truncate"
+                      title={activeTrip.destination || 'Destino a definir'}
+                    >
+                      {activeTrip.destination || 'Destino a definir'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Hidden Secondary Details & Shortcuts (Shown only when user opens Mais Opções) */}
+              {showHeroDetails && (
+                <div className="mt-3 pt-3 border-t border-[#334155]/60 space-y-3">
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[#bec6e0]">
+                    <span>
+                      Rota: <strong className="text-white">{activeTrip.routeHighlights || 'Rodoviária'}</strong>
                     </span>
-                    <span className="font-mono text-[#d8e3fb] bg-[#152031] px-2.5 py-1 rounded-lg border border-[#334155]">
+                    <span aria-hidden="true">·</span>
+                    <span>
+                      Carga: <strong className="text-[#4edea3]">{activeTrip.cargo || 'Geral'} ({activeTrip.cargoWeightTon || 0} Ton)</strong>
+                    </span>
+                    <span aria-hidden="true">·</span>
+                    <span className="font-mono tabular-nums">
                       Frete Bruto: <strong className="text-[#4edea3]">{formatCurrency(activeTrip.grossFreight || 0)}</strong>
                     </span>
                     {activeTrip.estimatedTollCost !== undefined && activeTrip.estimatedTollCost > 0 && (
-                      <span className="font-mono text-[#ffb95f] bg-[#152031] px-2.5 py-1 rounded-lg border border-[#334155]">
-                        Pedágios: <strong>{formatCurrency(activeTrip.estimatedTollCost)}</strong>
-                      </span>
+                      <>
+                        <span aria-hidden="true">·</span>
+                        <span className="font-mono tabular-nums">
+                          Pedágios: <strong className="text-[#ffb95f]">{formatCurrency(activeTrip.estimatedTollCost)}</strong>
+                        </span>
+                      </>
+                    )}
+                    {currentUser && (
+                      <>
+                        <span aria-hidden="true">·</span>
+                        <span>
+                          Condutor: <strong className="text-[#ffb95f]">{currentUser.name}</strong>
+                        </span>
+                      </>
                     )}
                   </div>
-                </div>
 
-                {/* Quick Action Button */}
-                <div className="shrink-0 flex items-center justify-start lg:justify-end">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      playCockpitClick();
-                      setIsEditTripOpen(true);
-                    }}
-                    className="w-full sm:w-auto h-11 px-4 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-[#081425] text-xs font-black flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-amber-500/20 transition-all active:scale-95"
-                  >
-                    <Edit className="w-4 h-4" />
-                    <span>Configurar Rota & KM</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Tier 3: Action Toolbars */}
-            <div className="space-y-3 pt-1">
-              {/* Row 3A: Driver & Operational Route Tools */}
-              <div>
-                <p className="text-[10px] font-extrabold text-[#94a3b8] uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
-                  <Compass className="w-3.5 h-3.5 text-[#60a5fa]" />
-                  Operação da Viagem & Navegação de Bordo
-                </p>
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={handleQuickLaunchGoogleMaps}
-                    className="h-10 px-3.5 rounded-xl bg-[#2563eb] hover:bg-[#1d4ed8] text-white text-xs font-extrabold flex items-center gap-1.5 shadow-md shadow-blue-500/20 cursor-pointer transition-all active:scale-95"
-                    title="Abrir rota diretamente no aplicativo Google Maps"
-                  >
-                    <ExternalLink className="w-4 h-4" />
-                    <span>Navegar no Maps</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      playCockpitClick();
-                      setIsMapsModalOpen(true);
-                    }}
-                    className="h-10 px-3.5 rounded-xl bg-[#1e293b] hover:bg-[#243248] border border-[#2563eb]/50 text-xs font-bold text-[#60a5fa] flex items-center gap-1.5 cursor-pointer transition-all active:scale-95"
-                    title="Calcular distância e praças de pedágio"
-                  >
-                    <Compass className="w-4 h-4" />
-                    <span>Roteirizador & Pedágios</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      playCockpitClick();
-                      setIsEditTripOpen(true);
-                    }}
-                    className="h-10 px-3.5 rounded-xl bg-[#1e293b] hover:bg-[#243248] border border-[#ffb95f]/50 text-xs font-bold text-[#ffb95f] flex items-center gap-1.5 cursor-pointer transition-all active:scale-95"
-                    title="Editar dados da viagem, frete e quilometragem"
-                  >
-                    <Edit className="w-4 h-4" />
-                    <span>{isAdmin ? 'Editar Parâmetros' : 'Editar Dados da Rota'}</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      playCockpitClick();
-                      setIsVehicleModalOpen(true);
-                    }}
-                    className="h-10 px-3.5 rounded-xl bg-[#1e293b] hover:bg-[#243248] border border-[#f59e0b]/60 text-xs font-bold text-[#ffb95f] flex items-center gap-1.5 cursor-pointer transition-all active:scale-95 shadow-xs"
-                    title="Alterar modelo do caminhão, placa ou eixos"
-                  >
-                    <Truck className="w-4 h-4 text-[#f59e0b]" />
-                    <span>Alterar Caminhão</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Row 3B: Management & Fleet Admin Tools (Exclusive to Admins) */}
-              {isAdmin && (
-                <div className="pt-2.5 border-t border-[#334155]/60">
-                  <p className="text-[10px] font-extrabold text-[#fca5a5] uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
-                    <ShieldCheck className="w-3.5 h-3.5 text-[#ef4444]" />
-                    Painel do Administrador (Gestão & Nuvem)
-                  </p>
                   <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => {
-                        playCockpitClick();
-                        setIsFleetModalOpen(true);
-                      }}
-                      className="h-10 px-3.5 rounded-xl bg-[#241705] hover:bg-[#3d2707] border border-[#f59e0b]/70 text-xs font-extrabold text-[#ffb95f] flex items-center gap-1.5 cursor-pointer transition-all active:scale-95 shadow-md shadow-amber-950/40"
-                      title="Gestão de Frota & Motoristas: Cadastrar Veículos de 2 a 9 eixos e criar acessos operacionais para motoristas (Exclusivo Administração)"
+                      onClick={handleQuickLaunchGoogleMaps}
+                      className="h-9 px-3 rounded-lg bg-[#2563eb] hover:bg-[#1d4ed8] text-white text-xs font-extrabold flex items-center gap-1.5 cursor-pointer"
                     >
-                      <Users className="w-4 h-4 text-[#f59e0b]" />
-                      <span>Frota & Motoristas</span>
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      <span>Navegar no Maps</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        guardedRun('routeAndMaps', () => {
+                          playCockpitClick();
+                          setIsMapsModalOpen(true);
+                        }, 'Roteirizador & Pedágios')
+                      }
+                      className={`h-9 px-3 rounded-lg bg-[#1e293b] hover:bg-[#243248] border border-[#2563eb]/50 text-xs font-bold text-[#60a5fa] flex items-center gap-1.5 cursor-pointer ${
+                        !canRouteMaps ? 'opacity-50' : ''
+                      }`}
+                    >
+                      <Compass className="w-3.5 h-3.5" />
+                      <span>Roteirizador & Pedágios</span>
                     </button>
 
                     <button
                       type="button"
                       onClick={() => {
                         playCockpitClick();
-                        setIsResetDataModalOpen(true);
+                        setIsVehicleModalOpen(true);
                       }}
-                      className="h-10 px-3.5 rounded-xl bg-[#450a0a] hover:bg-[#7f1d1d] border border-[#ef4444]/70 text-xs font-extrabold text-[#fca5a5] flex items-center gap-1.5 cursor-pointer transition-all active:scale-95 shadow-md shadow-red-950/40"
-                      title="Zerar todos os lançamentos para começar do zero (Função Exclusiva de Administração)"
+                      className="h-9 px-3 rounded-lg bg-[#1e293b] hover:bg-[#243248] border border-[#f59e0b]/60 text-xs font-bold text-[#ffb95f] flex items-center gap-1.5 cursor-pointer"
                     >
-                      <RotateCcw className="w-4 h-4 text-[#ef4444]" />
-                      <span>Zerar Dados</span>
+                      <Truck className="w-3.5 h-3.5 text-[#f59e0b]" />
+                      <span>Alterar Caminhão</span>
                     </button>
 
                     <button
                       type="button"
-                      onClick={() => {
-                        playCockpitClick();
-                        setIsBackupModalOpen(true);
-                      }}
-                      className="h-10 px-3.5 rounded-xl bg-[#081425] hover:bg-[#152031] border border-[#38bdf8]/60 text-xs font-bold text-[#38bdf8] flex items-center gap-1.5 cursor-pointer transition-all active:scale-95 shadow-xs"
-                      title="Backup Local JSON: Exportar ou Importar Viagens e Despesas (Administração)"
+                      onClick={() =>
+                        guardedRun('weatherAndProductivity', () => {
+                          playCockpitClick();
+                          setIsProductivityReportOpen(true);
+                        }, 'Produtividade km/L')
+                      }
+                      className={`h-9 px-3 rounded-lg bg-[#081425] hover:bg-[#152031] border border-[#38bdf8]/60 text-xs font-bold text-[#38bdf8] flex items-center gap-1.5 cursor-pointer ${
+                        !canWeatherProductivity ? 'opacity-50' : ''
+                      }`}
                     >
-                      <HardDrive className="w-4 h-4 text-[#38bdf8]" />
-                      <span>Backup JSON</span>
+                      <BarChart3 className="w-3.5 h-3.5 text-[#38bdf8]" />
+                      <span>Produtividade km/L</span>
                     </button>
 
-                    <button
-                      type="button"
-                      onClick={() => {
-                        playCockpitClick();
-                        setIsSupabaseModalOpen(true);
-                      }}
-                      className="h-10 px-3.5 rounded-xl bg-[#032e22] hover:bg-[#064e3b] border border-[#10b981]/60 text-xs font-bold text-[#34d399] flex items-center gap-1.5 cursor-pointer transition-all active:scale-95 shadow-md shadow-emerald-900/30"
-                      title="Integração Supabase: Banco de Dados na Nuvem, Sincronização e Migrations SQL (Administração)"
-                    >
-                      <Database className="w-4 h-4 text-[#34d399]" />
-                      <span>Supabase Nuvem</span>
-                    </button>
+                    {isAdmin && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            playCockpitClick();
+                            setIsFleetModalOpen(true);
+                          }}
+                          className="h-9 px-3 rounded-lg bg-[#241705] hover:bg-[#3d2707] border border-[#f59e0b]/70 text-xs font-extrabold text-[#ffb95f] flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Users className="w-3.5 h-3.5 text-[#f59e0b]" />
+                          <span>Frota & Motoristas</span>
+                        </button>
 
-                    <button
-                      type="button"
-                      onClick={() => {
-                        playCockpitClick();
-                        setIsAnnualReportOpen(true);
-                      }}
-                      className="h-10 px-3.5 rounded-xl bg-[#003824] hover:bg-[#004d32] border border-[#10b981]/70 text-xs font-bold text-[#4edea3] flex items-center gap-1.5 cursor-pointer transition-all active:scale-95 shadow-md shadow-emerald-950/40"
-                      title="Relatório Anual de Lucro: Gráfico de Barras Recharts com dados de viagens finalizadas do Supabase (Administração)"
-                    >
-                      <BarChart3 className="w-4 h-4 text-[#10b981]" />
-                      <span>Lucro Mensal</span>
-                    </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            playCockpitClick();
+                            setIsResetDataModalOpen(true);
+                          }}
+                          className="h-9 px-3 rounded-lg bg-[#450a0a] hover:bg-[#7f1d1d] border border-[#ef4444]/70 text-xs font-extrabold text-[#fca5a5] flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5 text-[#ef4444]" />
+                          <span>Zerar Dados</span>
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
               )}
@@ -1022,47 +1121,80 @@ export default function App() {
           </button>
 
           <button
-            onClick={() => {
-              playCockpitClick();
-              setActiveTab('jornada');
-            }}
+            onClick={() =>
+              guardedRun(
+                'tachographAndShift',
+                () => {
+                  playCockpitClick();
+                  setActiveTab('jornada');
+                },
+                'Tacógrafo & Jornada'
+              )
+            }
             className={`flex-1 min-w-[120px] h-11 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
               activeTab === 'jornada'
                 ? 'bg-[#1e293b] text-[#ffb95f] border border-[#ffb95f]/50 shadow-sm font-extrabold'
                 : 'text-[#94a3b8] hover:text-[#d8e3fb] hover:bg-[#1e293b]/50'
-            }`}
+            } ${!canTachograph ? 'opacity-50' : ''}`}
           >
-            <Clock className="w-4 h-4" />
-            Tacógrafo & Jornada
+            {canTachograph ? <Clock className="w-4 h-4" /> : <Lock className="w-3.5 h-3.5" />}
+            <span>Tacógrafo & Jornada</span>
+            {canTachograph && shiftController.isCustomReminderActive && (
+              <span className="text-[10px] font-black px-1.5 py-0.2 rounded bg-[#38bdf8] text-[#082f49] whitespace-nowrap">
+                Pausa {shiftController.customReminderLabel}
+              </span>
+            )}
+            {canTachograph && shiftController.isContinuousWarning && (
+              <span className="text-[10px] font-black px-1.5 py-0.2 rounded bg-[#f59e0b] text-[#0f172a] whitespace-nowrap">
+                4h00
+              </span>
+            )}
+            {canTachograph && shiftController.isContinuousOvertime && (
+              <span className="text-[10px] font-black px-1.5 py-0.2 rounded bg-[#ef4444] text-white whitespace-nowrap">
+                5h30
+              </span>
+            )}
           </button>
 
           <button
-            onClick={() => {
-              playCockpitClick();
-              setActiveTab('despesas');
-            }}
+            onClick={() =>
+              guardedRun(
+                'fuelAndExpenses',
+                () => {
+                  playCockpitClick();
+                  setActiveTab('despesas');
+                },
+                'Abastecimento & Despesas'
+              )
+            }
             className={`flex-1 min-w-[120px] h-11 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
               activeTab === 'despesas'
                 ? 'bg-[#1e293b] text-[#ffb95f] border border-[#ffb95f]/50 shadow-sm font-extrabold'
                 : 'text-[#94a3b8] hover:text-[#d8e3fb] hover:bg-[#1e293b]/50'
-            }`}
+            } ${!canFuelExpenses ? 'opacity-50' : ''}`}
           >
-            <Receipt className="w-4 h-4" />
+            {canFuelExpenses ? <Receipt className="w-4 h-4" /> : <Lock className="w-3.5 h-3.5" />}
             Despesas ({activeTrip.expenses.length})
           </button>
 
           <button
-            onClick={() => {
-              playCockpitClick();
-              setActiveTab('manutencao');
-            }}
+            onClick={() =>
+              guardedRun(
+                'maintenanceAndChecklist',
+                () => {
+                  playCockpitClick();
+                  setActiveTab('manutencao');
+                },
+                'Pneus, Manutenção & Checklist'
+              )
+            }
             className={`flex-1 min-w-[140px] h-11 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
               activeTab === 'manutencao'
                 ? 'bg-[#1e293b] text-[#ffb95f] border border-[#ffb95f]/50 shadow-sm font-extrabold'
                 : 'text-[#94a3b8] hover:text-[#d8e3fb] hover:bg-[#1e293b]/50'
-            }`}
+            } ${!canMaintenanceChecklist ? 'opacity-50' : ''}`}
           >
-            <Gauge className="w-4 h-4" />
+            {canMaintenanceChecklist ? <Gauge className="w-4 h-4" /> : <Lock className="w-3.5 h-3.5" />}
             <span>Pneus & Oficina</span>
             {maintenanceAlertCount > 0 && (
               <span className="text-[10px] font-black px-1.5 py-0.2 rounded-full bg-[#ea580c] text-white animate-pulse" title="Alertas Mecânicos de Odômetro">
@@ -1074,8 +1206,135 @@ export default function App() {
                 {criticalDocAlerts.length} doc
               </span>
             )}
+            {criticalTireAlerts.length > 0 && (
+              <span className="text-[10px] font-black px-1.5 py-0.2 rounded-full bg-[#f59e0b] text-[#0f172a] animate-pulse" title="Pneus com desgaste ≥ 80%">
+                {criticalTireAlerts.length} pneu
+              </span>
+            )}
           </button>
         </nav>
+
+        {/* Cockpit-Wide Visual Alert: Custom Break Reminder / Driver Shift Thresholds */}
+        {canTachograph && shiftController.isCustomReminderActive && (
+          <section
+            role="alert"
+            aria-label="Alerta visual de lembrete de pausa no cockpit"
+            className="p-4 rounded-2xl bg-[#082f49] border-2 border-[#38bdf8] shadow-xl text-[#e0f2fe] flex flex-col lg:flex-row lg:items-center justify-between gap-3"
+          >
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-[#38bdf8]/20 border border-[#38bdf8] flex items-center justify-center shrink-0">
+                <Coffee className="w-5 h-5 text-[#38bdf8]" />
+              </div>
+              <div className="space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="text-sm sm:text-base font-black text-[#e0f2fe] tracking-wide">
+                    Alerta de Pausa no Cockpit: Intervalo de {shiftController.customReminderLabel} atingido
+                  </h3>
+                </div>
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-[#bae6fd]">
+                  <span className="font-mono tabular-nums font-bold">
+                    Volante contínuo: {formatTimeSeconds(shiftController.continuousSeconds)}
+                  </span>
+                  <span aria-hidden="true">·</span>
+                  <span>
+                    Meta configurada ({shiftController.customReminderMode === 'manual' ? 'Manual' : 'Rápida'}):{' '}
+                    <strong className="font-mono tabular-nums">{shiftController.customReminderLabel}</strong>
+                  </span>
+                  <span aria-hidden="true">·</span>
+                  <span className="font-mono tabular-nums">
+                    Faltam {formatShortHours(shiftController.remainingToFourHours)} para o marco obrigatório de 4h00
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => shiftController.handleStatusChange('rest')}
+                className="h-10 px-4 rounded-xl bg-[#10b981] hover:bg-[#34d399] text-[#022c22] text-xs font-extrabold flex items-center justify-center gap-1.5 cursor-pointer transition-colors whitespace-nowrap"
+              >
+                <Coffee className="w-4 h-4" />
+                <span>Iniciar Pausa (Descanso)</span>
+              </button>
+
+              {activeTab !== 'jornada' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    playCockpitClick();
+                    setActiveTab('jornada');
+                  }}
+                  className="h-10 px-3.5 rounded-xl bg-[#0f172a] hover:bg-[#1e293b] border border-[#38bdf8]/50 text-[#38bdf8] text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors whitespace-nowrap"
+                >
+                  <Settings2 className="w-4 h-4" />
+                  <span>Configurar Lembrete</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={shiftController.dismissCustomReminder}
+                className="h-10 px-3 rounded-xl bg-[#0f172a] hover:bg-[#1e293b] border border-[#334155] text-[#cbd5e1] text-xs font-bold cursor-pointer transition-colors whitespace-nowrap"
+              >
+                Dispensar
+              </button>
+            </div>
+          </section>
+        )}
+
+        {canTachograph && activeTab !== 'jornada' && (shiftController.isContinuousWarning || shiftController.isContinuousOvertime) && (
+          <section
+            role="alert"
+            aria-label="Alerta de jornada Lei do Motorista no cockpit"
+            className={`p-4 rounded-2xl border-2 shadow-xl flex flex-col lg:flex-row lg:items-center justify-between gap-3 ${
+              shiftController.isContinuousOvertime
+                ? 'bg-[#690005] border-[#ea580c] text-[#ffdad6]'
+                : 'bg-[#472a00] border-[#f59e0b] text-[#fef3c7]'
+            }`}
+          >
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-black/25 border border-current flex items-center justify-center shrink-0">
+                <BellRing className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm sm:text-base font-black tracking-wide">
+                  {shiftController.isContinuousOvertime
+                    ? 'Alerta Crítico no Cockpit: Limite de 5h30 atingido'
+                    : 'Alerta Lei do Motorista no Cockpit: 4h00 de direção contínua'}
+                </h3>
+                <p className="text-xs opacity-90 mt-0.5 font-mono tabular-nums">
+                  Tempo no volante: {formatTimeSeconds(shiftController.continuousSeconds)} ·{' '}
+                  {shiftController.isContinuousOvertime
+                    ? 'Faça a pausa obrigatória de 30 minutos imediatamente.'
+                    : `Limite máximo de 5h30 em ${formatShortHours(shiftController.remainingContinuous)}.`}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => shiftController.handleStatusChange('rest')}
+                className="h-10 px-4 rounded-xl bg-[#10b981] hover:bg-[#34d399] text-[#022c22] text-xs font-extrabold flex items-center gap-1.5 cursor-pointer transition-colors whitespace-nowrap"
+              >
+                <Coffee className="w-4 h-4" />
+                <span>Iniciar Descanso 30m</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  playCockpitClick();
+                  setActiveTab('jornada');
+                }}
+                className="h-10 px-3.5 rounded-xl bg-[#0f172a] hover:bg-[#1e293b] border border-white/25 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors whitespace-nowrap"
+              >
+                <Clock className="w-4 h-4" />
+                <span>Abrir Tacógrafo</span>
+              </button>
+            </div>
+          </section>
+        )}
 
         {/* Tab 1: Cockpit - Checkpoints and Timeline */}
         {activeTab === 'cockpit' && (
@@ -1171,11 +1430,33 @@ export default function App() {
               </section>
             )}
 
-            <RouteCheckpoints
-              checkpoints={activeTrip.checkpoints}
-              onUpdateCheckpoint={handleUpdateCheckpoints}
-              onAddCheckpoint={handleAddCheckpoint}
-            />
+            {canWeatherProductivity && (
+              <RouteWeatherWidget
+                origin={activeTrip.origin}
+                destination={activeTrip.destination}
+              />
+            )}
+
+            {canMaintenanceChecklist && (
+              <PreTripChecklist
+                trip={activeTrip}
+                currentUser={currentUser}
+                onSaveInspection={handleSavePreTripInspection}
+              />
+            )}
+
+            {canRouteMaps ? (
+              <RouteCheckpoints
+                checkpoints={activeTrip.checkpoints}
+                onUpdateCheckpoint={handleUpdateCheckpoints}
+                onAddCheckpoint={handleAddCheckpoint}
+              />
+            ) : (
+              <div className="p-5 rounded-xl bg-[#152031] border border-[#334155] text-xs text-[#94a3b8] flex items-center gap-2.5">
+                <Lock className="w-4 h-4 text-[#f59e0b]" />
+                <span>O painel de Roteiro & Paradas foi restringido pelo Administrador para este perfil de motorista.</span>
+              </div>
+            )}
 
             {/* Quick Summary of Recent Expenses */}
             <div className="bg-[#1e293b] border border-[#334155] rounded-xl p-4 md:p-5">
@@ -1242,7 +1523,7 @@ export default function App() {
         {/* Tab 2: Tacógrafo & Jornada do Motorista */}
         {activeTab === 'jornada' && (
           <div>
-            <DriverShiftTimer />
+            <DriverShiftTimer controller={shiftController} />
           </div>
         )}
 
@@ -1420,6 +1701,12 @@ export default function App() {
               currentUser={currentUser}
               driverDocuments={driverDocuments}
               onUpdateDriverDocuments={(docs) => setDriverDocuments(docs)}
+              tires={tires}
+              onUpdateTires={(updatedTires) => setTires(updatedTires)}
+              expenses={activeTrip.expenses}
+              startOdometerKm={activeTrip.startOdometerKm}
+              targetConsumptionKmL={activeTrip.targetConsumptionKmL}
+              actualConsumptionKmL={activeTrip.actualConsumptionKmL}
               initialSubTab={maintenanceInitialSubTab}
             />
           </div>
@@ -1431,11 +1718,15 @@ export default function App() {
         <div className="max-w-7xl mx-auto flex items-center justify-between gap-2.5">
           {/* Primary Operational Action: Abastecimento de Bomba (Giant 56px Button) */}
           <button
-            onClick={() => {
-              playCockpitClick();
-              setIsFuelModalOpen(true);
-            }}
-            className="flex-1 h-14 min-h-[56px] rounded-xl bg-[#f59e0b] hover:bg-[#d97706] active:bg-[#b45309] text-[#0f172a] font-extrabold text-sm sm:text-base flex items-center justify-center gap-2.5 shadow-lg shadow-amber-500/25 active:scale-[0.99] transition-all cursor-pointer"
+            onClick={() =>
+              guardedRun('fuelAndExpenses', () => {
+                playCockpitClick();
+                setIsFuelModalOpen(true);
+              }, 'Abastecer Agora')
+            }
+            className={`flex-1 h-14 min-h-[56px] rounded-xl bg-[#f59e0b] hover:bg-[#d97706] active:bg-[#b45309] text-[#0f172a] font-extrabold text-sm sm:text-base flex items-center justify-center gap-2.5 shadow-lg shadow-amber-500/25 active:scale-[0.99] transition-all cursor-pointer ${
+              !canFuelExpenses ? 'opacity-50' : ''
+            }`}
           >
             <Fuel className="w-6 h-6 stroke-[2.5]" />
             <span>Abastecer Agora</span>
@@ -1443,11 +1734,15 @@ export default function App() {
 
           {/* Secondary Operational Action: Lançar Despesa (56px) */}
           <button
-            onClick={() => {
-              playCockpitClick();
-              setIsExpenseModalOpen(true);
-            }}
-            className="flex-1 h-14 min-h-[56px] rounded-xl bg-[#1e293b] hover:bg-[#243248] border border-[#475569] text-[#f8fafc] font-bold text-sm sm:text-base flex items-center justify-center gap-2 active:scale-[0.99] transition-all cursor-pointer"
+            onClick={() =>
+              guardedRun('fuelAndExpenses', () => {
+                playCockpitClick();
+                setIsExpenseModalOpen(true);
+              }, 'Lançar Gasto')
+            }
+            className={`flex-1 h-14 min-h-[56px] rounded-xl bg-[#1e293b] hover:bg-[#243248] border border-[#475569] text-[#f8fafc] font-bold text-sm sm:text-base flex items-center justify-center gap-2 active:scale-[0.99] transition-all cursor-pointer ${
+              !canFuelExpenses ? 'opacity-50' : ''
+            }`}
           >
             <Receipt className="w-5 h-5 text-[#ffb95f]" />
             <span>Lançar Gasto</span>
@@ -1455,11 +1750,15 @@ export default function App() {
 
           {/* Google Maps Route Button (56px) */}
           <button
-            onClick={() => {
-              playCockpitClick();
-              setIsMapsModalOpen(true);
-            }}
-            className="h-14 min-h-[56px] px-4 rounded-xl bg-[#1e3a8a] hover:bg-[#1d4ed8] border border-[#3b82f6]/50 text-[#93c5fd] font-bold text-xs sm:text-sm flex items-center justify-center gap-2 active:scale-[0.99] transition-all cursor-pointer"
+            onClick={() =>
+              guardedRun('routeAndMaps', () => {
+                playCockpitClick();
+                setIsMapsModalOpen(true);
+              }, 'Google Maps')
+            }
+            className={`h-14 min-h-[56px] px-4 rounded-xl bg-[#1e3a8a] hover:bg-[#1d4ed8] border border-[#3b82f6]/50 text-[#93c5fd] font-bold text-xs sm:text-sm flex items-center justify-center gap-2 active:scale-[0.99] transition-all cursor-pointer ${
+              !canRouteMaps ? 'opacity-50' : ''
+            }`}
             title="Google Maps & Cálculo de Pedágios"
           >
             <Compass className="w-5 h-5 text-[#60a5fa]" />
@@ -1468,11 +1767,15 @@ export default function App() {
 
           {/* Tertiary Action: Simulador ANTT (56px icon/text) */}
           <button
-            onClick={() => {
-              playCockpitClick();
-              setIsCalculatorOpen(true);
-            }}
-            className="h-14 min-h-[56px] px-4 rounded-xl bg-[#003824] hover:bg-[#004d32] border border-[#10b981]/50 text-[#10b981] font-bold text-xs sm:text-sm flex items-center justify-center gap-2 active:scale-[0.99] transition-all cursor-pointer"
+            onClick={() =>
+              guardedRun('freightSimulator', () => {
+                playCockpitClick();
+                setIsCalculatorOpen(true);
+              }, 'Simular Frete ANTT')
+            }
+            className={`h-14 min-h-[56px] px-4 rounded-xl bg-[#003824] hover:bg-[#004d32] border border-[#10b981]/50 text-[#10b981] font-bold text-xs sm:text-sm flex items-center justify-center gap-2 active:scale-[0.99] transition-all cursor-pointer ${
+              !canFreightSim ? 'opacity-50' : ''
+            }`}
             title="Calcular Piso ANTT e Custo"
           >
             <Calculator className="w-5 h-5" />
@@ -1529,6 +1832,8 @@ export default function App() {
         defaultCargoType={activeTrip.cargoType}
         defaultDistanceKm={activeTrip.totalDistanceKm}
         defaultDieselPrice={activeTrip.dieselAvgPricePerL}
+        defaultHasHelper={activeTrip.hasFreightHelper}
+        defaultHelperCost={activeTrip.freightHelperCost}
       />
 
       <TripReportModal
@@ -1649,6 +1954,25 @@ export default function App() {
             targetConsumptionKmL: selectedVehicle.targetConsumptionKmL || prev.targetConsumptionKmL,
           }));
         }}
+        onActivateDriverSession={(driver) => {
+          const safeDriver: User = { ...driver, isSupabaseVerifiedAdmin: false };
+          saveCurrentUserSession(safeDriver);
+          handleLoginSuccess(safeDriver);
+          setIsFleetModalOpen(false);
+          playSuccessChime();
+          showCockpitNotice(
+            `Sessão ativada em modo Somente Motorista para ${safeDriver.name}${
+              safeDriver.hasFreightHelper ? ' (Com Ajudante no Frete)' : ' (Solo)'
+            }.`
+          );
+        }}
+      />
+
+      <ProductivityReportModal
+        isOpen={isProductivityReportOpen}
+        onClose={() => setIsProductivityReportOpen(false)}
+        trip={activeTrip}
+        currentUser={currentUser}
       />
     </div>
   );

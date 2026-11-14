@@ -1,4 +1,4 @@
-import { User, isAdminRole } from '../types/cockpit';
+import { User, isAdminRole, DEFAULT_DRIVER_FUNCTIONS } from '../types/cockpit';
 
 /**
  * Contas pré-configuradas padrão (TODAS OPERACIONAIS / MOTORISTAS).
@@ -18,6 +18,10 @@ export const INITIAL_USERS: User[] = [
     truckModel: 'Scania R540 6x4 Super',
     truckPlate: 'BRA-9S40',
     cnhCategory: 'E',
+    status: 'ativo',
+    driverFunctions: { ...DEFAULT_DRIVER_FUNCTIONS },
+    hasFreightHelper: false,
+    freightHelperDailyCost: 0,
     isEmailVerified: true,
     isSupabaseVerifiedAdmin: false,
     createdAt: '2025-01-15T10:00:00Z',
@@ -33,6 +37,10 @@ export const INITIAL_USERS: User[] = [
     truckModel: 'Volvo FH 540 6x2 Globetrotter',
     truckPlate: 'PR-CAS-6540',
     cnhCategory: 'E',
+    status: 'ativo',
+    driverFunctions: { ...DEFAULT_DRIVER_FUNCTIONS },
+    hasFreightHelper: false,
+    freightHelperDailyCost: 0,
     isEmailVerified: true,
     isSupabaseVerifiedAdmin: false,
     createdAt: '2025-02-10T14:30:00Z',
@@ -48,6 +56,10 @@ export const INITIAL_USERS: User[] = [
     truckModel: 'Mercedes-Benz Actros 2651',
     truckPlate: 'MG-BTM-2651',
     cnhCategory: 'E',
+    status: 'ativo',
+    driverFunctions: { ...DEFAULT_DRIVER_FUNCTIONS },
+    hasFreightHelper: false,
+    freightHelperDailyCost: 0,
     isEmailVerified: true,
     isSupabaseVerifiedAdmin: false,
     createdAt: '2025-03-01T08:00:00Z',
@@ -63,6 +75,11 @@ export const INITIAL_USERS: User[] = [
     truckModel: 'Hyundai HR 2.5 Turbo',
     truckPlate: 'SP-HHR-2026',
     cnhCategory: 'B',
+    status: 'ativo',
+    driverFunctions: { ...DEFAULT_DRIVER_FUNCTIONS },
+    hasFreightHelper: true,
+    freightHelperName: 'Ajudante de Descarga Urbana',
+    freightHelperDailyCost: 180,
     isEmailVerified: true,
     isSupabaseVerifiedAdmin: false,
     createdAt: '2025-04-10T09:00:00Z',

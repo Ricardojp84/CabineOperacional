@@ -58,6 +58,7 @@ export const DriverDocumentSection: React.FC<DriverDocumentSectionProps> = ({
   const [editingDoc, setEditingDoc] = useState<DriverDocumentReminder | null>(null);
   const [renewingDoc, setRenewingDoc] = useState<DriverDocumentReminder | null>(null);
   const [newRenewalDate, setNewRenewalDate] = useState<string>('');
+  const [confirmDeleteDocId, setConfirmDeleteDocId] = useState<string | null>(null);
 
   // Form states for Add / Edit
   const [formType, setFormType] = useState<DriverDocumentType>('toxicologico');
@@ -291,15 +292,13 @@ export const DriverDocumentSection: React.FC<DriverDocumentSectionProps> = ({
     setTimeout(() => setActionNotice(null), 6000);
   };
 
-  // Delete Document
+  // Delete Document (inline confirmation, iframe-safe)
   const handleDeleteDoc = (id: string, title: string) => {
-    playAlertBeep();
-    if (!window.confirm(`Deseja remover o lembrete de "${title}"?`)) return;
-
     const updated = documents.filter((d) => d.id !== id);
     onUpdateDocuments(updated);
     saveDriverDocuments(updated);
     playSuccessChime();
+    setConfirmDeleteDocId(null);
     setActionNotice(`Documento "${title}" excluído.`);
     setTimeout(() => setActionNotice(null), 4000);
   };
@@ -657,13 +656,40 @@ export const DriverDocumentSection: React.FC<DriverDocumentSectionProps> = ({
                   <span>Editar</span>
                 </button>
 
-                <button
-                  onClick={() => handleDeleteDoc(item.id, item.title)}
-                  className="h-9 w-9 rounded-lg bg-[#081425] hover:bg-[#690005] border border-[#334155] hover:border-[#ef4444] text-[#94a3b8] hover:text-[#ffb4ab] flex items-center justify-center transition-colors cursor-pointer"
-                  title="Excluir lembrete de documento"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
+                {confirmDeleteDocId === item.id ? (
+                  <div className="flex items-center gap-1 bg-[#450a0a] border border-[#ef4444]/60 rounded-lg px-2 h-9">
+                    <span className="text-[10px] font-bold text-[#fca5a5]">Excluir?</span>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteDoc(item.id, item.title)}
+                      className="px-2 py-0.5 rounded bg-[#ef4444] text-white text-[10px] font-black cursor-pointer"
+                    >
+                      Sim
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        playCockpitClick();
+                        setConfirmDeleteDocId(null);
+                      }}
+                      className="px-1.5 py-0.5 rounded bg-[#1e293b] text-[#cbd5e1] text-[10px] font-bold cursor-pointer"
+                    >
+                      Não
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      playAlertBeep();
+                      setConfirmDeleteDocId(item.id);
+                    }}
+                    className="h-9 w-9 rounded-lg bg-[#081425] hover:bg-[#690005] border border-[#334155] hover:border-[#ef4444] text-[#94a3b8] hover:text-[#ffb4ab] flex items-center justify-center transition-colors cursor-pointer"
+                    title="Excluir lembrete de documento"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
             </div>
           );

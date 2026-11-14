@@ -1,5 +1,12 @@
 import React, { useState } from 'react';
-import { User, UserRole, isAdminRole, isDriverRole, isUserAdmin } from '../types/cockpit';
+import {
+  User,
+  UserRole,
+  DEFAULT_DRIVER_FUNCTIONS,
+  isAdminRole,
+  isDriverRole,
+  isUserAdmin,
+} from '../types/cockpit';
 import {
   getUsersFromStorage,
   saveUsersToStorage,
@@ -7,6 +14,10 @@ import {
   verifyUserByToken,
   resendVerificationToken,
 } from '../data/mockUsers';
+import {
+  authenticateDriverAccount,
+  sanitizeDriverOnlyRole,
+} from '../services/fleetService';
 import { playCockpitClick, playSuccessChime, playAlertBeep } from '../utils/audio';
 import {
   authenticateSupabaseAdmin,
@@ -45,6 +56,8 @@ import {
   Database,
   Code2,
   Loader2,
+  UserCheck,
+  Ban,
 } from 'lucide-react';
 
 interface AuthModalProps {
@@ -134,46 +147,60 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       }
     }
 
-    // 2. LOGIN OPERACIONAL DE MOTORISTA (LOCAL)
-    const found = usersList.find(
-      (u) =>
-        (u.email.toLowerCase() === trimmedEmail || u.email.split('@')[0].toLowerCase() === trimmedEmail) &&
-        u.password === trimmedPass
-    );
-
-    if (found) {
-      // Check if driver was blocked by admin
-      if (found.status === 'bloqueado') {
-        playAlertBeep();
-        setErrorMessage('Acesso bloqueado: Este cadastro de motorista foi suspenso pelo Administrador da frota.');
-        return;
-      }
-
-      // Check if email is verified
-      if (found.isEmailVerified === false) {
-        playAlertBeep();
-        setPendingUser(found);
-        setMode('verification_pending');
-        setErrorMessage(
-          'Seu cadastro ainda está pendente de confirmação. Acesse o link enviado para seu e-mail para ativar.'
-        );
-        return;
-      }
-
+    // 2. LOGIN OPERACIONAL DE MOTORISTA (SOMENTE MOTORISTA - LOCAL)
+    const driverAuth = authenticateDriverAccount(trimmedEmail, trimmedPass);
+    if (driverAuth.success && driverAuth.user) {
       playSuccessChime();
-      saveCurrentUserSession(found);
-      onLoginSuccess(found);
+      onLoginSuccess(driverAuth.user);
       if (onClose) onClose();
-    } else {
-      playAlertBeep();
-      setErrorMessage('Login ou senha incorretos para a conta de motorista.');
+      return;
     }
+
+    if (driverAuth.needsVerification && driverAuth.user) {
+      playAlertBeep();
+      setPendingUser(driverAuth.user);
+      setMode('verification_pending');
+      setErrorMessage(
+        driverAuth.error ||
+          'Seu cadastro ainda está pendente de confirmação. Acesse o link enviado para seu e-mail para ativar.'
+      );
+      return;
+    }
+
+    playAlertBeep();
+    setErrorMessage(driverAuth.error || 'Login ou senha incorretos para a conta de motorista.');
   };
 
   const handleQuickDemoLogin = (user: User) => {
+    setErrorMessage('');
+    if (user.status === 'bloqueado') {
+      playAlertBeep();
+      setErrorMessage(
+        `Acesso bloqueado: O motorista "${user.name}" está suspenso pelo Administrador da frota.`
+      );
+      return;
+    }
+
+    if (user.isEmailVerified === false) {
+      playAlertBeep();
+      setPendingUser(user);
+      setMode('verification_pending');
+      setErrorMessage('Esta conta de motorista ainda aguarda confirmação de e-mail.');
+      return;
+    }
+
+    const safeDriver: User = {
+      ...user,
+      role: sanitizeDriverOnlyRole(user.role),
+      isSupabaseVerifiedAdmin: false,
+      driverFunctions: {
+        ...DEFAULT_DRIVER_FUNCTIONS,
+        ...(user.driverFunctions || {}),
+      },
+    };
     playSuccessChime();
-    saveCurrentUserSession(user);
-    onLoginSuccess(user);
+    saveCurrentUserSession(safeDriver);
+    onLoginSuccess(safeDriver);
     if (onClose) onClose();
   };
 
@@ -239,10 +266,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       name: regName.trim(),
       email: trimmedEmail,
       password: regPassword.trim(),
-      role: regRole,
+      role: sanitizeDriverOnlyRole(regRole),
       truckModel: regTruck.trim() || 'Cavalo Mecânico 6x2',
       truckPlate: regPlate.trim().toUpperCase() || 'BRA-2026',
       rntrc: regRntrc.trim() || 'Isento',
+      status: 'ativo',
+      driverFunctions: { ...DEFAULT_DRIVER_FUNCTIONS },
+      hasFreightHelper: false,
+      freightHelperDailyCost: 0,
+      isSupabaseVerifiedAdmin: false,
       isEmailVerified: false,
       verificationToken: token,
       createdAt: new Date().toISOString(),
@@ -667,32 +699,60 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   <div className="space-y-2">
                     {usersList
                       .filter((u) => !isAdminRole(u.role))
-                      .map((u) => (
-                        <button
-                          key={u.id}
-                          type="button"
-                          onClick={() => handleQuickDemoLogin(u)}
-                          className="w-full p-3 rounded-xl bg-[#1e293b] hover:bg-[#243248] border border-[#334155] hover:border-[#10b981] flex items-center justify-between text-left transition-all cursor-pointer group"
-                        >
-                          <div className="min-w-0">
-                            <div className="font-extrabold text-xs text-[#d8e3fb] group-hover:text-[#4edea3] flex items-center gap-1.5">
-                              <Truck className="w-3.5 h-3.5 text-[#10b981]" />
-                              <span>{u.name}</span>
+                      .map((u) => {
+                        const isBlocked = u.status === 'bloqueado';
+                        return (
+                          <button
+                            key={u.id}
+                            type="button"
+                            onClick={() => handleQuickDemoLogin(u)}
+                            className={`w-full p-3 rounded-xl border flex items-center justify-between text-left transition-all cursor-pointer group ${
+                              isBlocked
+                                ? 'bg-[#1a0d12] border-[#ef4444]/40 opacity-75 hover:opacity-95'
+                                : 'bg-[#1e293b] hover:bg-[#243248] border-[#334155] hover:border-[#10b981]'
+                            }`}
+                          >
+                            <div className="min-w-0 pr-2">
+                              <div className="font-extrabold text-xs text-[#d8e3fb] group-hover:text-[#4edea3] flex flex-wrap items-center gap-1.5">
+                                <Truck className="w-3.5 h-3.5 text-[#10b981]" />
+                                <span>{u.name}</span>
+                                {isBlocked ? (
+                                  <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-[#450a0a] text-[#fca5a5] border border-[#ef4444]/50 inline-flex items-center gap-0.5">
+                                    <Ban className="w-2.5 h-2.5" />
+                                    Bloqueado
+                                  </span>
+                                ) : (
+                                  <span
+                                    className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded border inline-flex items-center gap-0.5 ${
+                                      u.hasFreightHelper
+                                        ? 'bg-[#082f49] text-[#38bdf8] border-[#38bdf8]/40'
+                                        : 'bg-[#0f172a] text-[#94a3b8] border-[#334155]'
+                                    }`}
+                                  >
+                                    <UserCheck className="w-2.5 h-2.5" />
+                                    {u.hasFreightHelper ? 'Com Ajudante' : 'Solo'}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[11px] text-[#94a3b8] truncate font-mono mt-0.5">
+                                Login: <strong className="text-[#bec6e0]">{u.email}</strong> • Senha:{' '}
+                                <strong className="text-[#ffb95f]">{u.password}</strong>
+                              </div>
+                              <div className="text-[10px] text-[#798098] mt-0.5">
+                                {u.truckModel} • Placa: {u.truckPlate} • Somente Motorista
+                              </div>
                             </div>
-                            <div className="text-[11px] text-[#94a3b8] truncate font-mono mt-0.5">
-                              Login: <strong className="text-[#bec6e0]">{u.email}</strong> • Senha:{' '}
-                              <strong className="text-[#ffb95f]">{u.password}</strong>
+                            <div
+                              className={`shrink-0 flex items-center gap-1 text-xs font-bold ${
+                                isBlocked ? 'text-[#fca5a5]' : 'text-[#10b981]'
+                              }`}
+                            >
+                              <span>{isBlocked ? 'Suspenso' : 'Entrar'}</span>
+                              <ArrowRight className="w-3.5 h-3.5" />
                             </div>
-                            <div className="text-[10px] text-[#798098] mt-0.5">
-                              {u.truckModel} • Placa: {u.truckPlate}
-                            </div>
-                          </div>
-                          <div className="shrink-0 flex items-center gap-1 text-xs font-bold text-[#10b981]">
-                            <span>Entrar</span>
-                            <ArrowRight className="w-3.5 h-3.5" />
-                          </div>
-                        </button>
-                      ))}
+                          </button>
+                        );
+                      })}
                   </div>
                 </>
               ) : (

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   APIProvider,
   Map as GoogleMapView,
@@ -89,6 +89,172 @@ const SEVERITY_COLORS: Record<
     pinBorder: '#064e3b',
     label: 'Custo Econômico',
   },
+};
+
+/**
+ * Pure ease-out cubic interpolation helper for numeric counter transitions.
+ */
+export function interpolateAnimatedValue(from: number, to: number, rawProgress: number): number {
+  const t = Math.max(0, Math.min(1, rawProgress));
+  const eased = 1 - Math.pow(1 - t, 3);
+  return from + (to - from) * eased;
+}
+
+/**
+ * Smoothly animates numeric transitions (e.g. toll total recalculations) via requestAnimationFrame.
+ * When replaySignal increments (e.g. modal opens), resets baseline to 0 for an incremental count-up.
+ */
+function useAnimatedNumber(
+  targetValue: number,
+  durationMs = 580,
+  replaySignal?: number
+): { value: number; isAnimating: boolean; direction: 'up' | 'down' | 'idle' } {
+  const [displayValue, setDisplayValue] = useState<number>(targetValue);
+  const [isAnimating, setIsAnimating] = useState<boolean>(false);
+  const [direction, setDirection] = useState<'up' | 'down' | 'idle'>('idle');
+  const currentRef = useRef<number>(targetValue);
+  const lastReplayRef = useRef<number | undefined>(replaySignal);
+  const rafRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const isReplay = replaySignal !== undefined && replaySignal !== lastReplayRef.current;
+    if (isReplay) {
+      lastReplayRef.current = replaySignal;
+      currentRef.current = 0;
+      setDisplayValue(0);
+    }
+
+    const startValue = currentRef.current;
+    if (startValue === targetValue) {
+      setIsAnimating(false);
+      setDirection('idle');
+      return;
+    }
+
+    const prefersReducedMotion =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    if (prefersReducedMotion || durationMs <= 0) {
+      currentRef.current = targetValue;
+      setDisplayValue(targetValue);
+      setIsAnimating(false);
+      setDirection('idle');
+      return;
+    }
+
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+    }
+
+    setDirection(targetValue >= startValue ? 'up' : 'down');
+    setIsAnimating(true);
+    const startTime = performance.now();
+
+    const step = (now: number) => {
+      const elapsed = now - startTime;
+      const progress = Math.min(1, elapsed / durationMs);
+      const nextValue = interpolateAnimatedValue(startValue, targetValue, progress);
+      currentRef.current = nextValue;
+      setDisplayValue(nextValue);
+
+      if (progress < 1) {
+        rafRef.current = requestAnimationFrame(step);
+      } else {
+        currentRef.current = targetValue;
+        setDisplayValue(targetValue);
+        setIsAnimating(false);
+        setDirection('idle');
+        rafRef.current = null;
+      }
+    };
+
+    rafRef.current = requestAnimationFrame(step);
+
+    return () => {
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    };
+  }, [targetValue, durationMs, replaySignal]);
+
+  return { value: displayValue, isAnimating, direction };
+}
+
+const AnimatedCurrencyCounter: React.FC<{
+  value: number;
+  durationMs?: number;
+  replaySignal?: number;
+  className?: string;
+}> = ({ value, durationMs = 580, replaySignal, className = '' }) => {
+  const { value: animatedVal, isAnimating } = useAnimatedNumber(value, durationMs, replaySignal);
+  return (
+    <span
+      className={`inline-block tabular-nums transition-transform duration-150 ${
+        isAnimating ? 'scale-[1.04] brightness-110' : 'scale-100'
+      } ${className}`}
+    >
+      {formatCurrency(Math.round(animatedVal))}
+    </span>
+  );
+};
+
+const TollCostKpiCard: React.FC<{
+  totalCost: number;
+  tollCount: number;
+  axles: VehicleAxles;
+  isEcoMode: boolean;
+  replaySignal: number;
+}> = ({ totalCost, tollCount, axles, isEcoMode, replaySignal }) => {
+  const { value: animatedCost, isAnimating, direction } = useAnimatedNumber(
+    totalCost,
+    620,
+    replaySignal
+  );
+  const { value: animatedPlazas } = useAnimatedNumber(tollCount, 460, replaySignal);
+
+  return (
+    <div
+      className={`p-3 rounded-xl border transition-all duration-300 ${
+        isEcoMode
+          ? 'bg-[#00291a] border-[#10b981]/60'
+          : 'bg-[#081425] border-[#334155]'
+      } ${
+        isAnimating
+          ? direction === 'down'
+            ? 'ring-2 ring-[#10b981]/60 shadow-lg shadow-emerald-500/15'
+            : 'ring-2 ring-[#f59e0b]/60 shadow-lg shadow-amber-500/15'
+          : ''
+      }`}
+    >
+      <div className="text-[10px] font-bold uppercase text-[#94a3b8] flex items-center justify-between">
+        <span className="flex items-center gap-1">
+          <Receipt className="w-3 h-3 text-[#ffb95f]" /> Custo de Pedágios
+        </span>
+        {isEcoMode && (
+          <span className="text-[9px] font-extrabold text-[#34d399] bg-[#064e3b] px-1.5 py-0.2 rounded">
+            ECONÔMICA
+          </span>
+        )}
+      </div>
+      <div
+        className={`font-mono text-xl font-extrabold mt-0.5 tabular-nums transition-all duration-150 ${
+          isAnimating
+            ? direction === 'down'
+              ? 'text-[#34d399] scale-[1.03] origin-left'
+              : 'text-[#fde68a] scale-[1.03] origin-left'
+            : 'text-[#ffb95f] scale-100'
+        }`}
+      >
+        {formatCurrency(Math.round(animatedCost))}
+      </div>
+      <div className="text-[10px] text-[#4edea3] font-mono font-bold truncate tabular-nums">
+        {Math.round(animatedPlazas)} Praças · {axles} eixos
+      </div>
+    </div>
+  );
 };
 
 /**
@@ -608,30 +774,13 @@ export const GoogleMapsRouteModal: React.FC<GoogleMapsRouteModalProps> = ({
             </div>
           </div>
 
-          <div
-            className={`p-3 rounded-xl border transition-colors ${
-              isEcoMode
-                ? 'bg-[#00291a] border-[#10b981]/60'
-                : 'bg-[#081425] border-[#334155]'
-            }`}
-          >
-            <div className="text-[10px] font-bold uppercase text-[#94a3b8] flex items-center justify-between">
-              <span className="flex items-center gap-1">
-                <Receipt className="w-3 h-3 text-[#ffb95f]" /> Pedágios
-              </span>
-              {isEcoMode && (
-                <span className="text-[9px] font-extrabold text-[#34d399] bg-[#064e3b] px-1.5 py-0.2 rounded">
-                  ECONÔMICA
-                </span>
-              )}
-            </div>
-            <div className="font-mono text-xl font-extrabold text-[#ffb95f] mt-0.5">
-              {effectiveTollCount} Praças
-            </div>
-            <div className="text-[10px] text-[#4edea3] font-mono font-bold truncate">
-              {formatCurrency(effectiveTollCost)} ({axles} eixos)
-            </div>
-          </div>
+          <TollCostKpiCard
+            totalCost={effectiveTollCost}
+            tollCount={effectiveTollCount}
+            axles={axles}
+            isEcoMode={isEcoMode}
+            replaySignal={fitTrigger}
+          />
 
           <div className="p-3 rounded-xl bg-[#081425] border border-[#334155]">
             <div className="text-[10px] font-bold uppercase text-[#94a3b8] flex items-center gap-1">
@@ -672,7 +821,15 @@ export const GoogleMapsRouteModal: React.FC<GoogleMapsRouteModalProps> = ({
               }`}
             >
               <RouteIcon className="w-3.5 h-3.5" />
-              <span>Rota Padrão ({formatCurrency(routeData.totalTollCost)})</span>
+              <span>
+                Rota Padrão (
+                <AnimatedCurrencyCounter
+                  value={routeData.totalTollCost}
+                  durationMs={480}
+                  replaySignal={fitTrigger}
+                />
+                )
+              </span>
             </button>
 
             <button
@@ -688,7 +845,15 @@ export const GoogleMapsRouteModal: React.FC<GoogleMapsRouteModalProps> = ({
               }`}
             >
               <TrendingDown className="w-3.5 h-3.5" />
-              <span>Rota Econômica ({formatCurrency(tollAnalysis.economicalOption.totalTollCost)})</span>
+              <span>
+                Rota Econômica (
+                <AnimatedCurrencyCounter
+                  value={tollAnalysis.economicalOption.totalTollCost}
+                  durationMs={480}
+                  replaySignal={fitTrigger}
+                />
+                )
+              </span>
             </button>
           </div>
 
@@ -1167,15 +1332,28 @@ export const GoogleMapsRouteModal: React.FC<GoogleMapsRouteModalProps> = ({
                 </span>
                 {tollAnalysis.economicalOption.netSavings > 0 && (
                   <span className="text-[10px] font-mono font-black px-2 py-0.5 rounded bg-[#10b981]/20 text-[#34d399] border border-[#10b981]/40">
-                    Economia Líquida: {formatCurrency(tollAnalysis.economicalOption.netSavings)}
+                    Economia Líquida:{' '}
+                    <AnimatedCurrencyCounter
+                      value={tollAnalysis.economicalOption.netSavings}
+                      durationMs={520}
+                    />
                   </span>
                 )}
               </div>
               <p className="text-[11px] text-[#94a3b8] leading-snug">
                 {tollAnalysis.economicalOption.strategySummary}{' '}
                 <span className="font-mono text-[#6ee7b7]">
-                  (Pedágio -{formatCurrency(tollAnalysis.economicalOption.tollSavings)} · Diesel extra +
-                  {formatCurrency(tollAnalysis.economicalOption.extraDieselCost)})
+                  (Pedágio -
+                  <AnimatedCurrencyCounter
+                    value={tollAnalysis.economicalOption.tollSavings}
+                    durationMs={520}
+                  />{' '}
+                  · Diesel extra +
+                  <AnimatedCurrencyCounter
+                    value={tollAnalysis.economicalOption.extraDieselCost}
+                    durationMs={520}
+                  />
+                  )
                 </span>
               </p>
             </div>

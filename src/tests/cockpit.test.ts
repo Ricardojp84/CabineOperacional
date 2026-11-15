@@ -102,6 +102,7 @@ import {
   interpretWeatherForDriving,
 } from '../services/weatherService';
 import { analyzeRouteTollHotspots } from '../data/tollPlazasDatabase';
+import { interpolateAnimatedValue } from '../components/GoogleMapsRouteModal';
 
 function createBaseTrip(overrides: Partial<Trip> = {}): Trip {
   return {
@@ -546,6 +547,13 @@ async function main() {
       assert.ok(analysis.economicalOption.tollSavings > 0);
       assert.ok(analysis.economicalOption.totalTollCost < 940);
       assert.ok(analysis.economicalOption.waypoints.length >= 2);
+
+      // Transição numérica animada (ease-out cubic)
+      assert.equal(interpolateAnimatedValue(0, 940, 0), 0);
+      assert.equal(interpolateAnimatedValue(0, 940, 1), 940);
+      const mid = interpolateAnimatedValue(0, 940, 0.5);
+      assert.ok(mid > 470 && mid < 940);
+      assert.equal(interpolateAnimatedValue(940, 680, 1.5), 680);
     }),
   ];
 
